@@ -1,5 +1,6 @@
 -- 003_hechos: FUNDAMENTALS, SHARES_OUTSTANDING, PRICES_DAILY, FX_RATES, STOCK_SPLIT, DIVIDEND, EARNINGS.
 -- Spec: docs/modelo/modelo-entidades.md, decisiones-modelo.md §2, §5, §6, decisiones-modelo-earnings.md.
+-- Cantidades (acciones, volumen) y importes son numeric; bigint solo para identificadores.
 -- Todo se guarda en forma nativa e inmutable; lo derivable (EPS, P/E, precios ajustados...) NO se almacena.
 -- Criterio de NULL (decisiones-modelo-identidad.md §8): dato curado -> NOT NULL; dato del proveedor -> NULL si falta,
 -- salvo que sin él la fila sea peligrosa o no signifique nada.
@@ -45,7 +46,7 @@ CREATE TABLE shares_outstanding (
   reported_at           date    NOT NULL,
   reported_at_source    text    NOT NULL DEFAULT 'estimated'
                         CHECK (reported_at_source IN ('provider', 'provider_derived', 'estimated', 'manual', 'cross_checked')),
-  shares                bigint  NOT NULL,
+  shares                numeric NOT NULL,
   UNIQUE (security_id, period_end, reported_at)
 );
 
@@ -59,7 +60,7 @@ CREATE TABLE prices_daily (
   high       numeric,
   low        numeric,
   close      numeric NOT NULL,
-  volume     bigint,
+  volume     numeric,
   PRIMARY KEY (listing_id, date)
 );
 
@@ -87,7 +88,9 @@ CREATE TABLE stock_split (
 -- Dividendos: amount_native = unadjustedValue del proveedor (NUNCA value, que se restata con cada split).
 -- Solo ex_date entra en el ajuste; las otras fechas son metadata. currency NO es opcional.
 -- period es vocabulario del proveedor (Quarterly, Annual, Interim, Final, Other...): texto sin CHECK.
--- Sin UNIQUE: la clave natural está pendiente de decidir (docs/propuestas-cambio-modelo.md P5).
+-- Clave natural (decisiones-modelo.md §5.5): UNIQUE (security_id, ex_date, period) NULLS NOT DISTINCT. period distingue
+-- un ordinario de un extraordinario con la misma fecha ex; el importe NO entra en la clave (una corrección del
+-- proveedor no debe crear una segunda fila). Con NULLS NOT DISTINCT dos dividendos con period NULL el mismo día chocan.
 CREATE TABLE dividend (
   dividend_id      bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   security_id      bigint  NOT NULL REFERENCES security (security_id),
@@ -97,9 +100,9 @@ CREATE TABLE dividend (
   payment_date     date,
   period           text,
   amount_native    numeric NOT NULL,
-  currency         text    NOT NULL
+  currency         text    NOT NULL,
+  UNIQUE NULLS NOT DISTINCT (security_id, ex_date, period)
 );
-CREATE INDEX dividend_security_ex_date_idx ON dividend (security_id, ex_date);
 
 -- Calendario de resultados y estimaciones, una fila por (security, periodo fiscal). Hecho puntual mutable hasta
 -- consolidar: solo el último estado (UPSERT por la PK). El EPS/revenue real NO se guarda (se deriva de FUNDAMENTALS).

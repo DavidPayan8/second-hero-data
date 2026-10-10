@@ -118,6 +118,9 @@ Confirmado con datos reales.
   - `currency` viene por fila: `USD`, `GBP`, `EUR`.
   - Puede incluir fechas futuras (ITX: `date: 2026-10-29`).
 - `div/SHOP.TO`: vacío.
+- `period` también viene `null` y con el valor `"Unknown"`: `AAPL.US` 9 de 92 filas `null`; `SHEL.LSE` 58 de 104; `SAP.XETRA` 18 de 32; `ITX.MC` 20 de 47; `CS.US` trae 3 `"Unknown"`. Lista real de valores vistos: `Quarterly`, `Annual`, `Interim`, `Final`, `Other`, `Unknown`, `null`. Importa para la clave `UNIQUE NULLS NOT DISTINCT (security_id, ex_date, period)`.
+- **Claves repetidas:** en los 5 valores con dividendos (301 filas) no se repite `date` ni `(date, period)`.
+- **¿`date` es la fecha ex?** Comprobado con `div/AAPL.US` (92 filas, todas con `recordDate`): la distancia en días hábiles de `date` a `recordDate` sigue el ciclo de liquidación de EEUU. T+5 (hasta 1995-06-06): 4 días hábiles en 19 de 33 filas y 5 en las otras 14. T+3 (1995-06-07 a 2017-09-04): 2 días en 20 de 23 y 3 en 3. T+2 (2017-09-05 a 2024-05-27): 1 día en 25 de 27 y 2 en 2. T+1 (desde 2024-05-28): 0 días en 8 de 9 y 1 en 1. Ninguna `date` cae en fin de semana. El contador no descuenta festivos. Las desviaciones desde 2017 son tres, todas con `recordDate` en el lunes 11 de noviembre o su observancia (2018-11-12, 2019-11-11, 2024-11-11), compatible con el cierre de la liquidación por festivo, aunque no lo he comprobado contra un calendario de festivos. Conclusión: `date` se comporta como fecha ex, no como fecha de registro. El criterio literal ("un día hábil antes de `recordDate` antes del 28/05/2024") solo se cumple en la era T+2; en eras anteriores la distancia es mayor por el ciclo T+3 y T+5.
 - Falta un split de los últimos 12 meses para ver el formato con datos recientes.
 
 ### C8 … C12

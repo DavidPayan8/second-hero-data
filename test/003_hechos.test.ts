@@ -105,12 +105,12 @@ test('stock_split: UNIQUE (security, ex_date), numerador y denominador > 0 y no 
   await c.query(SP, [s2, '2020-08-31', 4, 1]); // otra security, misma fecha
 }));
 
-test('dividend: amount_native y currency obligatorios, period libre, sin UNIQUE, sin columna ajustada', () => inRollback(async (c) => {
+test('dividend: amount_native y currency obligatorios, period libre, sin columna ajustada', () => inRollback(async (c) => {
   const s = await security(c, await company(c));
   const D = "INSERT INTO dividend (security_id, ex_date, period, amount_native, currency) VALUES ($1,'2026-08-10',$2,0.27,'USD')";
   await c.query(D, [s, 'Quarterly']);
   await c.query(D, [s, 'Etiqueta nueva del proveedor']); // vocabulario del proveedor: sin CHECK
-  await c.query("INSERT INTO dividend (security_id, ex_date, amount_native, currency) VALUES ($1,'2026-08-10',0.1,'USD')", [s]); // period NULL; mismo ex_date: P5 abierta
+  await c.query("INSERT INTO dividend (security_id, ex_date, amount_native, currency) VALUES ($1,'2026-08-10',0.1,'USD')", [s]); // period NULL, mismo ex_date pero otro period
   expect((await dbError(c, "INSERT INTO dividend (security_id, ex_date, currency) VALUES ($1,'2026-08-11','USD')", [s]))?.code).toBe('23502');
   expect((await dbError(c, "INSERT INTO dividend (security_id, ex_date, amount_native) VALUES ($1,'2026-08-11',0.1)", [s]))?.code).toBe('23502');
   await c.query("INSERT INTO dividend (security_id, ex_date, amount_native, currency) VALUES ($1,'2026-11-09',0.2725,'GBP')", [s]);
@@ -138,4 +138,29 @@ test('earnings: PK natural, report_time en dominio con default unknown, estimaci
   expect((await dbError(c, "INSERT INTO earnings (security_id, fiscal_period_end, period_type, revenue_estimate) VALUES ($1,'2025-09-30','Q',1000)", [s]))?.message).toContain('earnings_estimate_has_currency');
   await c.query("INSERT INTO earnings (security_id, fiscal_period_end, period_type, eps_estimate, estimate_currency) VALUES ($1,'2025-09-30','Q',1.98,'USD')", [s]);
   expect(await columns('earnings')).not.toContain('eps_actual');
+}));
+
+test('P5: clave del dividendo (security_id, ex_date, period) con NULLS NOT DISTINCT', () => inRollback(async (c) => {
+  const s = await security(c, await company(c));
+  const D = "INSERT INTO dividend (security_id, ex_date, period, amount_native, currency) VALUES ($1,'2026-08-10',$2,$3,'USD')";
+  await c.query(D, [s, 'Quarterly', 0.27]);
+  expect((await dbError(c, D, [s, 'Quarterly', 0.27]))?.code).toBe('23505'); // mismo (security, ex_date, period)
+  expect((await dbError(c, D, [s, 'Quarterly', 0.99]))?.code).toBe('23505'); // el importe no entra en la clave: una corrección no crea otra fila
+  await c.query(D, [s, 'Other', 1.5]); // misma fecha, otro period: ordinario + extraordinario
+  await c.query(D, [s, null, 0.1]);
+  expect((await dbError(c, D, [s, null, 0.2]))?.code).toBe('23505'); // dos con period NULL la misma fecha
+  const s2 = await security(c, await company(c));
+  await c.query(D, [s2, 'Quarterly', 0.27]); // otra security, misma fecha y period
+  await c.query("INSERT INTO dividend (security_id, ex_date, period, amount_native, currency) VALUES ($1,'2026-11-09','Quarterly',0.27,'USD')", [s]); // otra fecha
+}));
+
+test('cantidades numeric: acciones fraccionarias y volumen decimal no se rechazan', () => inRollback(async (c) => {
+  const sec = await security(c, await company(c));
+  await c.query("INSERT INTO shares_outstanding (security_id, period_end, reported_at, shares) VALUES ($1,'2025-12-31','2026-01-30',15700000000.5)", [sec]);
+  const l = await listing(c, sec);
+  await c.query("INSERT INTO prices_daily (listing_id, date, close, volume) VALUES ($1,'2026-10-09',1,1234.5)", [l]);
+  const { rows } = await pool.query<{ table_name: string; column_name: string; data_type: string }>(
+    "SELECT table_name, column_name, data_type FROM information_schema.columns WHERE table_schema='public' AND ((table_name='shares_outstanding' AND column_name='shares') OR (table_name='prices_daily' AND column_name='volume')) ORDER BY 1",
+  );
+  expect(rows.map((r) => r.data_type)).toEqual(['numeric', 'numeric']);
 }));
