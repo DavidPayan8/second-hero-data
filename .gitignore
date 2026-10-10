@@ -1,0 +1,18 @@
+# Secretos
+.env
+.env.*
+!.env.example
+
+# Datos del proveedor (licenciados): nunca al repo
+fixtures/
+
+# Node
+node_modules/
+dist/
+coverage/
+*.log
+
+# SO / editores
+.DS_Store
+.idea/
+.vscode/

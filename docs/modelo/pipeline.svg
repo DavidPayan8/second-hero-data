@@ -1,0 +1,107 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1480" height="620" viewBox="0 0 1480 620" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#64748b"/>
+    </marker>
+    <style>
+      .title   { font-size: 30px; font-weight: 700; fill: #0f172a; }
+      .subtitle{ font-size: 16px; fill: #475569; }
+      .boxname { font-size: 19px; font-weight: 700; }
+      .boxdesc { font-size: 13px; }
+      .tag     { font-size: 12px; font-weight: 700; letter-spacing: .5px; }
+      .legend  { font-size: 14px; fill: #334155; }
+      .phase   { font-size: 13px; font-weight:700; fill:#94a3b8; letter-spacing:1px;}
+    </style>
+  </defs>
+
+  <rect width="1480" height="620" fill="#f8fafc"/>
+
+  <text x="40" y="52" class="title">Tubería de datos — Second Hero</text>
+  <text x="40" y="80" class="subtitle">De dónde salen los datos y quién hace cada fase. Azul = nuestro · Gris = otro equipo.</text>
+
+  <!-- ===================== OURS band ===================== -->
+  <rect x="300" y="150" width="860" height="250" rx="16" fill="#eff6ff" stroke="#bfdbfe" stroke-width="2"/>
+  <text x="730" y="138" text-anchor="middle" class="phase">NUESTRA RESPONSABILIDAD</text>
+
+  <!-- Box geometry helper: width 180, height 150, y=185 -->
+  <!-- PROVEEDOR (external) -->
+  <g>
+    <rect x="60" y="185" width="180" height="150" rx="12" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="2" stroke-dasharray="6 4"/>
+    <text x="150" y="222" text-anchor="middle" class="boxname" fill="#334155">Proveedor</text>
+    <text x="150" y="246" text-anchor="middle" class="boxdesc" fill="#64748b">EODHD</text>
+    <text x="150" y="272" text-anchor="middle" class="boxdesc" fill="#64748b">origen de todo</text>
+    <text x="150" y="292" text-anchor="middle" class="boxdesc" fill="#64748b">2ª fuente: SEC EDGAR</text>
+    <text x="150" y="320" text-anchor="middle" class="tag" fill="#94a3b8">EXTERNO</text>
+  </g>
+
+  <!-- NORMALIZADOR -->
+  <g>
+    <rect x="320" y="185" width="180" height="150" rx="12" fill="#ffffff" stroke="#3b82f6" stroke-width="2.5"/>
+    <text x="410" y="222" text-anchor="middle" class="boxname" fill="#1d4ed8">Normalizador</text>
+    <text x="410" y="250" text-anchor="middle" class="boxdesc" fill="#475569">descarga + parseo</text>
+    <text x="410" y="270" text-anchor="middle" class="boxdesc" fill="#475569">resuelve identidad</text>
+    <text x="410" y="290" text-anchor="middle" class="boxdesc" fill="#475569">(ISIN→security, MIC)</text>
+    <text x="410" y="310" text-anchor="middle" class="boxdesc" fill="#475569">guarda payload crudo</text>
+  </g>
+
+  <!-- FUENTE DE VERDAD -->
+  <g>
+    <rect x="540" y="185" width="180" height="150" rx="12" fill="#ffffff" stroke="#3b82f6" stroke-width="2.5"/>
+    <text x="630" y="216" text-anchor="middle" class="boxname" fill="#1d4ed8">Fuente de</text>
+    <text x="630" y="238" text-anchor="middle" class="boxname" fill="#1d4ed8">verdad</text>
+    <text x="630" y="266" text-anchor="middle" class="boxdesc" fill="#475569">tablas inmutables</text>
+    <text x="630" y="286" text-anchor="middle" class="boxdesc" fill="#475569">forma/divisa nativa</text>
+    <text x="630" y="306" text-anchor="middle" class="boxdesc" fill="#475569">22 tablas · v1 OK</text>
+  </g>
+
+  <!-- MATERIALIZADOR -->
+  <g>
+    <rect x="760" y="185" width="180" height="150" rx="12" fill="#ffffff" stroke="#3b82f6" stroke-width="2.5"/>
+    <text x="850" y="222" text-anchor="middle" class="boxname" fill="#1d4ed8">Materializador</text>
+    <text x="850" y="250" text-anchor="middle" class="boxdesc" fill="#475569">cruza niveles, deriva</text>
+    <text x="850" y="270" text-anchor="middle" class="boxdesc" fill="#475569">(EPS, P/E, técnicos)</text>
+    <text x="850" y="290" text-anchor="middle" class="boxdesc" fill="#475569">reconcilia divisa</text>
+    <text x="850" y="310" text-anchor="middle" class="boxdesc" fill="#475569">winsoriza + rankea</text>
+  </g>
+
+  <!-- VISTAS -->
+  <g>
+    <rect x="980" y="185" width="180" height="150" rx="12" fill="#ffffff" stroke="#3b82f6" stroke-width="2.5"/>
+    <text x="1070" y="222" text-anchor="middle" class="boxname" fill="#1d4ed8">Vistas</text>
+    <text x="1070" y="250" text-anchor="middle" class="boxdesc" fill="#475569">proyección congelada</text>
+    <text x="1070" y="270" text-anchor="middle" class="boxdesc" fill="#475569">screener_snapshot</text>
+    <text x="1070" y="290" text-anchor="middle" class="boxdesc" fill="#475569">+ series ajustadas</text>
+    <text x="1070" y="310" text-anchor="middle" class="boxdesc" fill="#475569">reconstruible 100%</text>
+  </g>
+
+  <!-- FRONT (external) -->
+  <g>
+    <rect x="1240" y="185" width="180" height="150" rx="12" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="2" stroke-dasharray="6 4"/>
+    <text x="1330" y="222" text-anchor="middle" class="boxname" fill="#334155">Front / app</text>
+    <text x="1330" y="250" text-anchor="middle" class="boxdesc" fill="#64748b">UI</text>
+    <text x="1330" y="270" text-anchor="middle" class="boxdesc" fill="#64748b">API pública</text>
+    <text x="1330" y="290" text-anchor="middle" class="boxdesc" fill="#64748b">hosting / deploy</text>
+    <text x="1330" y="320" text-anchor="middle" class="tag" fill="#94a3b8">OTRO EQUIPO</text>
+  </g>
+
+  <!-- ===================== arrows ===================== -->
+  <line x1="244" y1="260" x2="316" y2="260" stroke="#64748b" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <line x1="504" y1="260" x2="536" y2="260" stroke="#64748b" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <line x1="724" y1="260" x2="756" y2="260" stroke="#64748b" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <line x1="944" y1="260" x2="976" y2="260" stroke="#64748b" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <line x1="1164" y1="260" x2="1236" y2="260" stroke="#64748b" stroke-width="2.5" marker-end="url(#arrow)"/>
+
+  <!-- ===================== principle callout ===================== -->
+  <rect x="300" y="440" width="860" height="110" rx="12" fill="#fefce8" stroke="#fde68a" stroke-width="2"/>
+  <text x="330" y="474" class="boxname" fill="#92400e" font-size="16">Principio que une las fases</text>
+  <text x="330" y="500" class="boxdesc" fill="#713f12" font-size="14">La fuente de verdad solo guarda el dato primario, inmutable. Todo lo derivable (EPS, P/E, capitalización,</text>
+  <text x="330" y="520" class="boxdesc" fill="#713f12" font-size="14">precio ajustado, ranking) se calcula en el materializador y vive en las vistas — nunca se almacena dos veces.</text>
+  <text x="330" y="540" class="boxdesc" fill="#713f12" font-size="14">Las vistas se pueden borrar y reconstruir al 100% desde la fuente de verdad.</text>
+
+  <!-- ===================== legend ===================== -->
+  <rect x="40" y="585" width="18" height="18" rx="3" fill="#ffffff" stroke="#3b82f6" stroke-width="2.5"/>
+  <text x="66" y="599" class="legend">Nuestro (datos)</text>
+  <rect x="220" y="585" width="18" height="18" rx="3" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="2" stroke-dasharray="4 3"/>
+  <text x="246" y="599" class="legend">Externo</text>
+  <text x="360" y="599" class="legend" fill="#64748b">Flujo: proveedor → normalizador → fuente de verdad → materializador → vistas → front</text>
+</svg>

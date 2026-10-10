@@ -1,0 +1,90 @@
+# Decisiones de diseño — ETFs
+
+Continúa la fuente de verdad (`decisiones-modelo.md` núcleo + `decisiones-modelo-ownership.md`). Cubre el alcance "Acciones + ETFs desde v1".
+
+Estado: **cerrado** (identidad + tablas de datos).
+
+---
+
+## 1. Identidad del ETF: `company_id` nullable gobernado por invariante (Opción B)
+
+Un ETF encaja en media parte del modelo y no en la otra:
+- **Encaja** en SECURITY (ISIN, ticker), LISTING (cotiza en bolsas/divisas), PRICES_DAILY, STOCK_SPLIT y DIVIDEND (los ETF hacen splits ocasionales y reparten distribuciones). Todo eso cuelga de SECURITY y **sirve sin tocar nada**.
+- **No encaja** en la rama COMPANY→FUNDAMENTALS: un ETF no tiene estados financieros ni empresa operativa. Tiene una **gestora** (iShares, Vanguard), que no es una COMPANY.
+
+**Decisión (B):** un ETF es una `SECURITY` con **`company_id NULL`** y tipo de activo ETF; sus datos propios cuelgan de SECURITY en tablas nuevas. El NULL no queda libre, se gobierna por invariante:
+
+- **Invariante:** `requires_company = true ⇒ company_id NOT NULL` ; `requires_company = false ⇒ company_id NULL`.
+- **Mecanismo (NO es un CHECK):** `asset_type` vive en la tabla `ASSET_TYPE` (SECURITY lo referencia por `asset_type_id` FK), y un CHECK de Postgres solo ve columnas de su propia fila — no puede hacer el JOIN. El invariante es **cross-tabla**, así que se declara con:
+  - **`ASSET_TYPE.requires_company BOOLEAN`** — el comportamiento como **dato**, no como código (mismo patrón que `in_screener_scope`): un tipo de activo futuro declara por sí mismo si exige company, sin tocar constraints.
+  - **TRIGGER en SECURITY** (BEFORE INSERT/UPDATE) que hace el JOIN a `ASSET_TYPE` y verifica el invariante contra `requires_company`.
+  - **TRIGGER defensivo en ASSET_TYPE:** el trigger de SECURITY no protege contra un UPDATE de `requires_company` que invalide filas ya existentes. `requires_company` se trata como **inmutable una vez el tipo tiene securities asociadas**; un trigger simple en ASSET_TYPE impide el cambio si hay filas colgando.
+- `COMPANY` **conserva su significado limpio** ("empresa operativa", siempre con posibilidad de fundamentales). No se contamina con filas huecas.
+
+> **Cambio al núcleo:** este invariante añadió `ASSET_TYPE.requires_company` a la entidad `ASSET_TYPE` del núcleo — ya reflejado en `modelo-entidades.md`.
+
+**Opciones descartadas:**
+- **A (COMPANY hueca):** ETF con fila en COMPANY y fundamentales NULL. Reabre el pecado de aplanamiento que todo el modelo evita (mete dos naturalezas en la misma caja). Descartada.
+- **C (rama emisor ISSUER/FUND):** la más fiel al dominio, pero exige una jerarquía de emisor **hoy, sin ningún requisito de v1 que la ejercite** (la gestora es dato de display, no eje de consulta). Especulación estructural. Descartada **para v1**.
+
+**C es la evolución natural, y B es su gancho.** B es un **subconjunto** de C: el día que exista un requisito real de emisor (screener de ETFs por gestora, comparar familias de fondos), promover el campo `issuer` (ver tablas de datos) a una entidad `ISSUER` es una migración **aditiva** —nada de lo construido se tira—. Al revés (elegir C y no usarla nunca) no tiene des-migración barata. Mismo patrón que `ASSET_TYPE.in_screener_scope` y `provider_symbol`/MIC: identidad estable ahora, jerarquía después, cuando el requisito la pague.
+
+### Corolarios
+- **El materializador ramifica por tipo igualmente.** Un ETF no tiene EPS → no pasa por el cálculo de P/E; calcula expense ratio, prima/descuento sobre NAV, etc. Esa bifurcación acción-vs-ETF es inevitable en las tres opciones, así que meter el ETF en COMPANY no "unificaría" nada, solo ensuciaría la dimensión.
+- **Eventos ya cubiertos:** splits y distribuciones del ETF entran por STOCK_SPLIT/DIVIDEND (cuelgan de SECURITY) sin tocar nada.
+- **Flag para las tablas de datos:** `SHARES_OUTSTANDING` es bitemporal (`reported_at`), pero las acciones de un ETF cambian por creation/redemption, no por resultados que se restaten. Para ETF ese eje bitemporal es ruido → resuelto como snapshot-temporal en `ETF_NAV_DAILY` (ver §2.b).
+
+---
+
+## 2. Tablas de datos del ETF
+
+Cuatro tablas nuevas, todas colgando de SECURITY. Ninguna toca el núcleo salvo el invariante de `company_id` (§1, trigger — no CHECK). Cada una clasificada por patrón temporal (marco general, ver `decisiones-modelo-ownership.md` §1).
+
+### 2.a `ETF_PROFILE` — dimensión (casi estática), 1:1 con SECURITY
+
+- Campos: `issuer` (gestora, **texto en v1 = gancho a Opción C**), `inception_date`, `index_tracked`, `category`/`asset_class`, `domicile`, `expense_ratio`.
+- Patrón: **dimensión mutable**. Su historial lo cubre el **log de correcciones** (pendiente global, ver `README.md`), no una serie propia.
+- **`expense_ratio`:** se queda en el perfil (dimensión); su historial vive en el log de correcciones. Candidato a serie temporal propia en el futuro si aparece requisito.
+
+### 2.b `ETF_NAV_DAILY` — serie diaria
+
+- Campos: `date`, `nav`, `nav_currency`, `aum`/`net_assets`, `shares_outstanding_etf`.
+- PK natural `(security_id, date)`. Hermana de PRICES_DAILY.
+- **Separada de PRICES_DAILY a propósito:** el NAV **no es el precio de mercado**; el ETF cotiza con prima/descuento sobre NAV, y esa diferencia es señal derivada que solo existe si guardas ambos. `nav_currency` explícito.
+- **Resuelve el flag de SHARES_OUTSTANDING:** las acciones del ETF (creation/redemption) van aquí como serie diaria, **no** en `SHARES_OUTSTANDING` bitemporal (no se restatean).
+
+### 2.c `ETF_HOLDING` — snapshot-temporal (identidad del constituyente: columnas ahora, resolución después)
+
+- Campos: `as_of_date`, `constituent_security_id` (FK a SECURITY, **nullable**), `constituent_isin`, `constituent_name` (fallback), `weight_pct` (**NOT NULL**, define el holding), `market_value` (nullable), `shares_held` (nullable) — `market_value` y `shares_held` son datos adicionales del proveedor, **no redundantes entre sí**.
+- Patrón: **snapshot-temporal** (`as_of_date` en clave, histórico conservado — la rotación de holdings es señal). `id` sintético + `UNIQUE (security_id, constituent_key, as_of_date)` (clave natural con string libre → misma regla que `HOLDER_POSITION`).
+- **Constituyente = una SECURITY que a menudo ya tienes.** Por eso `constituent_security_id` FK cuando está en tu universo, con `constituent_isin`/`name` de fallback (bonos, activos fuera de cobertura). Regalo: "qué ETFs contienen esta acción" se vuelve una query.
+- **Separación columna/resolución (decidido):** las **columnas se fijan ahora**; la **lógica de resolución** ISIN→`security_id` (con anclado estable, herencia de la regla de `holder_ref`) se **difiere al normalizador**. Mismo patrón que el `.US`: la columna existe, el lookup se difiere. → pendiente.
+
+### 2.d `ETF_ALLOCATION` — snapshot-temporal (proveedor canónico, derivación como validación)
+
+- Campos: `as_of_date`, `dimension` (sector/country/asset_type), `bucket` (p. ej. "Technology"), `weight_pct`, `source` (`provider`|`derived`).
+- Patrón: snapshot-temporal. `id` sintético + `UNIQUE (security_id, as_of_date, dimension, bucket)` (bucket es string libre).
+- **Decisión (evita `weight_pct` con dos significados):**
+  - **Se guarda SIEMPRE la allocation del proveedor como hecho canónico** ("primitivo dentro de nuestro límite", como el analyst consensus). Es lo que se sirve al usuario: una sola definición, consistente entre todos los ETFs. `source = 'provider'`.
+  - **La derivación propia** (sumar `ETF_HOLDING` × sector del constituyente) **NO sustituye** al dato servido: se usa como **regla de validación** (cross-check — si tu suma se aleja mucho de la del proveedor, hay un dato malo). Alimenta la capa de validación pendiente.
+  - **Si el proveedor NO da allocation** para un ETF, se deriva como único recurso y se marca **`source = 'derived'`** (procedencia explícita, lección de `reported_at_source`). Nunca se mezcla dato de proveedor y derivado sin rastro.
+- **La derivación como cross-check requiere umbral de cobertura de holdings** (no fiarse si falta demasiado del ETF) → detalle de la capa de validación.
+- **Vocabulario sectorial unificado (decidido):** cuando `dimension='sector'`, el `bucket` del proveedor se **mapea al `SECTOR` canónico** vía `SOURCE_SECTOR_MAP` (la misma tabla que clasifica empresas), guardando `ETF_ALLOCATION.sector_id`. Sin esto habría dos vocabularios de sector incompatibles (el canónico de acciones y el texto de ETF), y un filtro por "Technology" devolvería resultados incoherentes entre acciones y ETFs. `bucket` se conserva como texto crudo del proveedor (display/fallback); `sector_id` es el enlace canónico. Bucket sin mapeo → `sector_id` NULL + finding `SECTOR_UNMAPPED`. `country`/`asset_type` no se mapean (sector_id NULL).
+
+---
+
+## 3. Derivados de este chunk (NO en la fuente de verdad)
+
+- **Performance del ETF** (1d/1m/1y…) → de la serie NAV/precio.
+- **`premium_discount`** = `(precio − nav) / nav` → cruce PRICES_DAILY × ETF_NAV_DAILY.
+- **`change` de un holding** → comparar filas consecutivas de ETF_HOLDING (por `constituent_security_id`, fallback `constituent_isin`/`name`).
+- **Allocation derivada** → NO se sirve (es validación); solo se materializa como dato servido cuando `source = 'derived'` (proveedor no la dio).
+
+---
+
+## 4. Pendiente de este chunk
+
+- **Resolución de identidad del constituyente** (`ETF_HOLDING`): lógica ISIN→`security_id` con anclado estable, al normalizador. Verificar shape del endpoint de holdings de EODHD en vivo.
+- **`expense_ratio`**: promover a serie temporal si aparece requisito.
+- **Umbral de cobertura** para validar allocation derivada vs. proveedor → capa de validación.
+- **Verificar en vivo** el bloque `ETF_Data` de EODHD (NAV, holdings, allocations) — shape no confirmado contra respuesta real.
