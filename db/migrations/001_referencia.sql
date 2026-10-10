@@ -13,14 +13,19 @@ CREATE TABLE asset_type (
 );
 
 -- Bolsa real, clave = MIC (ISO 10383). No es el código del proveedor.
--- timezone (IANA) y close_time (hora local) sirven al disparo de materialización por cierre.
+-- Dato de referencia curado por nosotros (nunca lo crea el normalizador): las cinco columnas son
+-- obligatorias, un NULL significaría carga inicial incompleta y fallaría tarde en la materialización.
+--   country_iso: ISO 3166 alfa-2, mismo formato que COMPANY.country_iso.
+--   timezone: IANA; que exista en pg_timezone_names lo comprueba un test (un CHECK no puede consultarlo).
+--   close_time: hora local de cierre de la sesión normal (sin medias sesiones ni festivos).
+--   default_currency: NO se usa para rellenar LISTING.quote_currency, que viene del proveedor símbolo a símbolo.
 CREATE TABLE exchange (
   exchange_id      bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   mic              text NOT NULL UNIQUE,
-  country_iso      text,
-  default_currency text,
-  timezone         text,
-  close_time       time
+  country_iso      text NOT NULL CHECK (country_iso ~ '^[A-Z]{2}$'),
+  default_currency text NOT NULL,
+  timezone         text NOT NULL,
+  close_time       time NOT NULL
 );
 
 -- Taxonomía canónica propia, dos niveles. Lo no clasificado es NULL en COMPANY, no una fila aquí.
