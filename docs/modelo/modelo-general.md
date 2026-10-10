@@ -136,10 +136,10 @@ erDiagram
 
   COMPANY {
     bigint company_id PK
-    text legal_name
+    text legal_name "nullable"
     text lei UK "nullable"
     text cik UK "nullable"
-    text identity_source "cik|lei|isolated"
+    text identity_source "cik|lei|isolated (CHECK con la evidencia)"
     text country_iso
     bigint sector_id FK "nullable (NULL=no clasificado, fuera del ranking)"
     bigint industry_id FK "nullable (trigger de consistencia con sector_id)"
@@ -156,13 +156,13 @@ erDiagram
   LISTING {
     bigint listing_id PK
     bigint security_id FK
-    bigint exchange_id FK "resuelto del sub-exchange del simbolo"
+    bigint exchange_id FK "nullable: venue no resuelto"
     text ticker
     text provider_symbol "ej. AAPL.US ; UNIQUE (crosswalk v1)"
-    text quote_currency "nativa (ej. GBX)"
+    text quote_currency "NOT NULL ; nativa (ej. GBX)"
     bool is_primary_listing "UNIQUE parcial por security"
-    text status
-    date status_date
+    text status "NOT NULL active|delisted"
+    date status_date "nullable"
   }
 
   EXCHANGE {

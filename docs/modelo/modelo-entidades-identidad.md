@@ -29,12 +29,16 @@ erDiagram
 
 ```
 resolver(registro del proveedor):
-  # camino rápido
+  # camino rápido (con comprobación de identidad, §2 y §6)
   si existe LISTING con provider_symbol = registro.symbol:
+      si registro.isin y registro.isin != SECURITY(listing).isin:
+          finding IDENTITY_RELINK_CONFLICT; no ingerir este símbolo   # ticker reutilizado
       return ese listing_id
 
   # desde cero
-  mic = resolver_mic(registro.symbol)            # datos de referencia
+  si no registro.quote_currency:
+      finding; no crear listing                   # precios sin unidad = peligro (§8)
+  mic = resolver_mic(registro.symbol)            # datos de referencia; NULL si venue desconocido (+ VENUE_UNMAPPED)
   security = buscar SECURITY por isin(registro)  # ancla primaria
   si no security:
       security = buscar por (mic, ticker)         # fallback
@@ -57,7 +61,8 @@ resolver_company(registro):
 - **Prioridad de matching:** ISIN → (MIC, ticker) → nuevo. Nunca por `provider_symbol`.
 - **Anclado:** una vez `(provider, provider_symbol)` → listing, se recuerda; no se re-resuelve.
 - **Cambio de ticker:** `symbol-change-history` → update `provider_symbol` + `LISTING_TICKER_CHANGE`, mismo `listing_id`.
-- **Seguridad:** identificador nuevo que contradice un enlace existente → marcar para revisión, **nunca re-enlazar en silencio**.
+- **Seguridad:** identificador nuevo que contradice un enlace existente → marcar para revisión, **nunca re-enlazar en silencio**. Aplica también al camino rápido (EODHD reutiliza tickers: `BBBY` vs `BBBY_old`).
+- **Restricciones de columnas** (status, exchange_id, quote_currency, legal_name, CHECK de `identity_source`): ver `decisiones-modelo-identidad.md` §8.
 
 ## Instancias del mismo patrón (en sus chunks)
 

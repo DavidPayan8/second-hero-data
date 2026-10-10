@@ -40,7 +40,7 @@ erDiagram
 - `virtual` → saltar.
 → MIC → `EXCHANGE.exchange_id` para el `LISTING`.
 
-Venue desconocido en un agregado → marcar el símbolo para revisión, no inventar MIC.
+Venue desconocido en un agregado → el listing se crea con `exchange_id` NULL + finding `VENUE_UNMAPPED`, nunca se inventa un MIC (`decisiones-modelo-identidad.md` §8).
 
 ## Cambio al núcleo
 
