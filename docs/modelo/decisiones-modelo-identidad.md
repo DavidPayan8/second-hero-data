@@ -53,7 +53,7 @@ Una SECURITY nueva necesita `company_id` (NOT NULL por trigger para acciones). �
 Cierra el anclado de `holder_ref` que quedó abierto en el chunk de ownership. `holder_ref` puede ser intermitente (el proveedor lo da a veces); una vez visto para un holder, se fija.
 
 - **`SOURCE_HOLDER_MAP (provider, holder_name_norm) → holder_ref`**, con `first_seen_at`. Es la memoria name→ref. La ingesta la consulta y actualiza; una vez hay ref para un nombre, no vuelve a `holder_name` aunque el proveedor lo omita.
-- `holder_name_norm` = nombre normalizado (trim, mayúsculas, sin puntuación) para absorber variantes de forma ("BlackRock Inc" vs "BlackRock, Inc.").
+- `holder_name_norm` = nombre normalizado (trim, mayúsculas, sin puntuación) para absorber variantes de forma ("BlackRock Inc" vs "BlackRock, Inc."). Se implementa como **función SQL `IMMUTABLE` `holder_name_norm(text)`**, la misma que usa la clave de `HOLDER_POSITION` (`decisiones-modelo-ownership.md` §2.b): una sola definición de la normalización.
 
 ---
 

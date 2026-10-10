@@ -13,8 +13,8 @@ erDiagram
   HOLDER_POSITION {
     bigint id PK
     bigint security_id FK
-    text holder_ref "id estable del proveedor (CIK filer), NULL -> fallback a name. PROVISIONAL"
-    text holder_name "display + fallback de identidad"
+    text holder_ref "id estable del proveedor; con EODHD esperado NULL (doc: sin id)"
+    text holder_name "display; identidad = holder_name_norm(holder_name) si no hay ref"
     text holder_type "institution | fund (CHECK)"
     date as_of_date "eje snapshot-temporal, historico conservado"
     numeric shares_held
@@ -47,8 +47,13 @@ erDiagram
   ANALYST_CONSENSUS {
     bigint security_id PK "FK"
     date as_of_date PK "eje snapshot-temporal, historico conservado"
-    numeric rating_mean "1=Strong Buy .. 5=Strong Sell (EODHD). Agregado no descomponible. VERIFICAR direccion"
-    int num_analysts
+    numeric rating_mean "tal cual del proveedor; direccion NO fijada aqui (doc: 5=Strong Buy). VERIFICAR"
+    int strong_buy "nullable, recuento"
+    int buy "nullable"
+    int hold "nullable"
+    int sell "nullable"
+    int strong_sell "nullable"
+    int num_analysts "nullable: solo si el proveedor lo da explicito"
     numeric target_mean
     numeric target_low
     numeric target_high
@@ -57,7 +62,8 @@ erDiagram
 
   SHORT_INTEREST {
     bigint security_id PK "FK"
-    date settlement_date PK "eje snapshot-temporal, nativa de la bolsa"
+    date as_of_date PK "dia de observacion (eje snapshot-temporal)"
+    date settlement_date "nullable: solo si el proveedor la da"
     numeric shares_short "primitivo: de aqui cuelgan los derivados"
     numeric shares_short_prior_month "nullable, SOLO fallback de arranque (no primitivo, ver decisiones 5.b)"
   }
@@ -67,11 +73,11 @@ erDiagram
 
 | Entidad | Cuelga de | PK / UNIQUE | Patrón temporal |
 |---|---|---|---|
-| **HOLDER_POSITION** | SECURITY | `id` PK + `UNIQUE (security_id, COALESCE(holder_ref, holder_name), as_of_date)` | Snapshot-temporal — histórico conservado. |
+| **HOLDER_POSITION** | SECURITY | `id` PK + `UNIQUE (security_id, COALESCE(holder_ref, holder_name_norm(holder_name)), as_of_date)` | Snapshot-temporal — histórico conservado. |
 | **INSIDER_TRANSACTION** | SECURITY | `id` PK + dedup preferido por `provider_txn_id`; fallback `UNIQUE (security_id, insider_name, transaction_date, transaction_code, shares_transacted)` | Hecho-puntual — `ingested_at` simple. |
 | **OWNERSHIP_SNAPSHOT** | SECURITY | natural `(security_id, as_of_date)` | Snapshot-temporal — histórico conservado. |
 | **ANALYST_CONSENSUS** | SECURITY | natural `(security_id, as_of_date)` | Snapshot-temporal — histórico conservado. |
-| **SHORT_INTEREST** | SECURITY | natural `(security_id, settlement_date)` | Snapshot-temporal — histórico conservado. |
+| **SHORT_INTEREST** | SECURITY | natural `(security_id, as_of_date)`; `settlement_date` nullable; deduplicación por valor | Snapshot-temporal — histórico conservado. |
 
 **Regla de PK:** natural cuando la clave es `(security_id, <fecha>)` limpia; `id` sintético + `UNIQUE` solo cuando la clave natural incluye un string libre (`HOLDER_POSITION`) o no hay clave natural fiable (`INSIDER_TRANSACTION`). Sin el `UNIQUE`, una re-ingesta de la misma fecha duplica filas en estas tablas append-only (mismo riesgo que `is_primary_listing` en el núcleo).
 

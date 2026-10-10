@@ -266,7 +266,7 @@ erDiagram
   HOLDER_POSITION {
     bigint id PK
     bigint security_id FK
-    text holder_ref "id estable proveedor, NULL->fallback name"
+    text holder_ref "id estable proveedor; con EODHD NULL"
     text holder_name "display + fallback"
     text holder_type "institution|fund (CHECK)"
     date as_of_date "snapshot-temporal"
@@ -300,8 +300,9 @@ erDiagram
   ANALYST_CONSENSUS {
     bigint security_id PK "FK"
     date as_of_date PK "snapshot-temporal"
-    numeric rating_mean "1=Strong Buy..5=Strong Sell. VERIFICAR"
-    int num_analysts
+    numeric rating_mean "tal cual; direccion sin fijar (doc: 5=Strong Buy)"
+    int strong_buy "recuentos x5 (buy, hold, sell, strong_sell), nullable"
+    int num_analysts "nullable"
     numeric target_mean
     numeric target_low
     numeric target_high
@@ -310,7 +311,8 @@ erDiagram
 
   SHORT_INTEREST {
     bigint security_id PK "FK"
-    date settlement_date PK "snapshot-temporal"
+    date as_of_date PK "dia de observacion"
+    date settlement_date "nullable"
     numeric shares_short "primitivo"
     numeric shares_short_prior_month "nullable, solo fallback arranque"
   }
@@ -505,7 +507,7 @@ erDiagram
 | **INSIDER_TRANSACTION** | `id` + dedup | Hecho-puntual | ownership |
 | **OWNERSHIP_SNAPSHOT** | `(security_id, as_of_date)` | Snapshot-temporal | ownership |
 | **ANALYST_CONSENSUS** | `(security_id, as_of_date)` | Snapshot-temporal | ownership |
-| **SHORT_INTEREST** | `(security_id, settlement_date)` | Snapshot-temporal | ownership |
+| **SHORT_INTEREST** | `(security_id, as_of_date)` | Snapshot-temporal | ownership |
 
 ### Fuente de verdad — ETF (4)
 | Entidad | PK | Patrón temporal | Chunk |

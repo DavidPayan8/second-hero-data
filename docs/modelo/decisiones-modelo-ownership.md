@@ -5,7 +5,7 @@ Continúa `decisiones-modelo.md` (núcleo). Resumen de las decisiones cerradas d
 - `shares_short_prior_month`: no es fuente, es *fallback de arranque* — el dato real es la serie (fila `settlement_date` anterior).
 - `UNIQUE` natural en todas las tablas append-only de este chunk; regla de PK unificada con el núcleo (natural donde la clave es limpia, `id` sintético solo con string libre en la clave).
 - Identidad del holder: `holder_ref` (id estable del proveedor) como clave preferida; `holder_name` como fallback, riesgo nombrado.
-- `rating_mean`: dirección de escala fijada (1=Strong Buy) y marcada para verificar en vivo.
+- `rating_mean`: se guarda tal cual, **sin fijar dirección en la fuente de verdad** (la doc del proveedor indica 5 = Strong Buy, al revés de lo que se asumió al principio); ver §7.
 - `INSIDER_TRANSACTION`: `provider_txn_id` para dedup preferida; clave de dedup fallback definida.
 - `holder_type` se queda como `CHECK` inline (dos valores, no justifica tabla de referencia).
 
@@ -58,6 +58,7 @@ El derivado "variación de posición de un holder" compara filas consecutivas po
 - **`holder_name`**: se conserva para display; es el **fallback** de identidad cuando `holder_ref` es NULL.
 - **Riesgo nombrado:** cuando solo hay `holder_name`, el derivado de variación es frágil ante cambios de forma del nombre. No se normaliza un `HOLDER` a entidad propia en v1 (sobre-ingeniería para el MVP), pero queda anotado como riesgo conocido y como candidato de v2 si duele.
 - **Provisional:** que EODHD dé un id estable de filer no está verificado en vivo. Confirmar antes de construir la ingesta.
+- **Actualización (P6, 2026-10-10):** según la documentación de EODHD, `Holders` no trae ningún id estable, así que con este proveedor `holder_ref` será NULL y la identidad cae siempre al nombre. Por eso el `UNIQUE` usa el **nombre normalizado**, no el literal: `UNIQUE (security_id, COALESCE(holder_ref, holder_name_norm(holder_name)), as_of_date)`. `holder_name_norm()` es una función SQL `IMMUTABLE` (trim, mayúsculas, sin puntuación) y es **la misma** que define la clave de `SOURCE_HOLDER_MAP`: una sola definición de normalización en la base de datos. `holder_name` se sigue guardando literal para mostrarlo. `SOURCE_HOLDER_MAP` queda como gancho para un proveedor futuro que sí dé ids (p. ej. el CIK del filer en los 13F de la SEC).
 
 ### 2.c `INSIDER_TRANSACTION` (hallazgo 5)
 
@@ -66,6 +67,7 @@ Hecho-puntual append-only **sin clave natural fiable**: un insider puede hacer d
 - **`provider_txn_id TEXT NULL`**: id de transacción/filing del proveedor si existe → **clave de dedup preferida** (`UNIQUE`).
 - **Fallback de dedup** cuando no hay `provider_txn_id`: `(security_id, insider_name, transaction_date, transaction_code, shares_transacted)` como clave *tolerable* (acepta el falso duplicado raro de dos operaciones idénticas el mismo día como mal menor frente a duplicar en cada re-ingesta).
 - **Provisional:** shape completo y existencia de `provider_txn_id` **sin verificar** contra doc en vivo de EODHD. Confirmar shape antes de construir la ingesta.
+- **Actualización (P6, 2026-10-10):** según la documentación, el endpoint de Form 4 trae un `accession_number` **por filing** (no por transacción) y solo cubre EEUU; el feed plano no trae id y la doc dice que devuelve vacío para `AAPL.US`. **No se cambia el esquema todavía**: `provider_txn_id` nullable + clave de fallback cubren ambos casos. La fuente concreta (Form 4 o feed plano) y si `accession_number` + algo identifica una transacción se deciden con un payload real. En Europa no hay feed de insiders: cobertura NULL.
 
 ---
 
@@ -82,23 +84,27 @@ Snapshot-temporal. `as_of_date` = `General.UpdatedAt` de la ingesta. PK natural 
 Snapshot-temporal. PK natural `(security_id, as_of_date)`. Append-only, histórico conservado.
 
 - **`target_currency` explícito** (no asumir `quote_currency`). El precio objetivo puede venir en divisa distinta a la de cotización → reconciliar en lectura, misma regla que `FUNDAMENTALS.currency`/`DIVIDEND.currency`.
-- **`rating_mean` — dirección de escala (hallazgo 4):** escala 1–5 con dirección **1 = Strong Buy … 5 = Strong Sell** (convención EODHD). Es un agregado no descomponible. La dirección **debe** quedar documentada: si la capa de lectura asume "mayor es mejor", invierte todo el consenso y pinta un Strong Buy como lo peor. **Verificar la dirección contra la doc en vivo** al conectar; no darla por supuesta.
+- **`rating_mean` — dirección de escala:** **la fuente de verdad no fija la dirección**; guarda el valor tal cual lo da el proveedor. La primera versión asumía 1 = Strong Buy; la documentación de EODHD dice lo contrario (5 = Strong Buy, 1 = Strong Sell) y su ejemplo cuadra (`Rating: 4.1064` con 24 Strong Buy y 1 Strong Sell). Interpretar la escala es cosa de VISTAS, y antes de usarla se confirma con un payload real. Si la lectura se equivoca de dirección, invierte todo el consenso.
+- **Recuentos por recomendación** (P6): el proveedor da cuántos analistas están en cada categoría. Son primitivos (no se reconstruyen desde la media), así que se guardan: `strong_buy`, `buy`, `hold`, `sell`, `strong_sell` (enteros, nullable). Además permiten **comprobar la dirección con los propios datos**: la media ponderada de los recuentos solo coincide con `rating_mean` en una de las dos orientaciones (regla de validación candidata).
+- **`num_analysts`** solo se rellena si el proveedor da el número explícito; si no, es la suma de los recuentos y se deriva en VISTAS (no se guarda lo derivable). **`target_low` / `target_high`**: NULL cuando el proveedor solo da la media (`TargetPrice`).
 
 ---
 
 ## 5. Short interest: solo el hecho, no los ratios
 
-Snapshot-temporal. PK natural `(security_id, settlement_date)`.
+Snapshot-temporal. PK natural **`(security_id, as_of_date)`**.
 
-- **`SHORT_INTEREST(security_id, settlement_date, shares_short, shares_short_prior_month)`.** `shares_short` es la columna primitiva de la que cuelgan los derivados.
+- **`SHORT_INTEREST(security_id, as_of_date, settlement_date, shares_short, shares_short_prior_month)`.** `shares_short` es la columna primitiva de la que cuelgan los derivados.
+- **Cambio de clave (P6, 2026-10-10):** la primera versión usaba `settlement_date` como clave, pero según la documentación EODHD da el short interest **sin fecha de liquidación** (`Technicals.SharesShort` con valor; `SharesStats.ShortInterest` a null en el ejemplo). La clave pasa a **`as_of_date` = día en que lo observamos**, y `settlement_date` queda **nullable**, rellena solo si el proveedor la da. No se infiere la fecha de liquidación del calendario de FINRA: el dato del proveedor puede ir un ciclo por detrás y eso sería inventar. Consecuencia conocida: el valor puede tener hasta ~2 semanas de antigüedad respecto a `as_of_date`.
+- **Deduplicación por valor obligatoria:** como el dato solo cambia cada ~2 semanas y se puede observar a diario, no se inserta una fila si `shares_short` es igual al de la última fila de esa security. Así cada fila de la serie es un cambio real y el "periodo anterior" es la fila previa.
 - `short_ratio` (= `shares_short` ÷ volumen medio diario de `PRICES_DAILY`) y `short_percent_float` (= `shares_short` ÷ `OWNERSHIP_SNAPSHOT.shares_float`) **no se guardan**, derivables.
-- Histórico conservado por `settlement_date`.
+- Histórico conservado por `as_of_date`.
 
 ### 5.b `shares_short_prior_month` — fallback de arranque, no fuente (hallazgo 1)
 
 En v2 se guardaba como columna primitiva, lo cual era **incoherente** con `change_p`: siendo la serie snapshot-temporal, "el short del mes anterior" es el `shares_short` de una fila anterior de la propia serie. Guardarlo es guardar un derivado.
 
-**Decisión:** la fuente del "mes anterior" es **la serie**, no la columna. La capa de lectura deriva el prior-month buscando la fila con `settlement_date` inmediatamente anterior (ojo: el short interest se reporta en fechas de settlement ~bimensuales, así que "mes anterior" es la fila previa de la serie, no un offset de calendario fijo).
+**Decisión:** la fuente del "mes anterior" es **la serie**, no la columna. La capa de lectura deriva el periodo anterior tomando la fila previa de la serie (gracias a la deduplicación por valor, cada fila es un cambio real; no es un offset de calendario fijo).
 
 - **`shares_short_prior_month` se mantiene como columna NULLABLE**, pero **solo como fallback de arranque**: durante la ventana en la que aún no tenemos histórico propio suficiente (primeras ingestas), no hay fila previa en la serie de la que derivar, y el valor que el proveedor entrega gratis evita un hueco. Una vez la serie tiene profundidad, la lectura **prefiere la serie** y este campo queda redundante.
 - Documentado así explícitamente para no repetir la incoherencia con `change_p`: no es un dato primitivo, es un respaldo para el bootstrap.
@@ -113,8 +119,25 @@ En v2 se guardaba como columna primitiva, lo cual era **incoherente** con `chang
 
 ## Pendiente (sin cerrar en este chunk)
 
-- Verificar shape real de `InsiderTransactions` y existencia de `provider_txn_id` contra doc EODHD en vivo (provisional).
-- Verificar existencia de id estable de filer (`holder_ref`) en el ownership de EODHD (provisional).
-- Verificar dirección de la escala `rating_mean` en vivo.
+- Verificar shape real de `InsiderTransactions` y existencia de `provider_txn_id` contra doc EODHD en vivo (provisional). Decidir fuente: Form 4 o feed plano.
+- Confirmar con payload que `Holders` no trae id estable (la doc dice que no).
+- Confirmar con payload la dirección de `rating_mean` (la doc dice 5 = Strong Buy) y que los recuentos cuadran con ella.
+- Confirmar con payload que el short interest no trae fecha de liquidación.
+
+---
+
+## 7. Contraste con la documentación de EODHD (propuesta P6)
+
+Al implementar la migración de ownership se contrastó el modelo con la documentación del plugin de EODHD (no con payloads: el plan Free no da fundamentales). Cinco discrepancias, resueltas así:
+
+| | Discrepancia | Decisión |
+|---|---|---|
+| a | Dirección de `rating_mean` | Se guarda tal cual; la dirección no se fija en la fuente de verdad (§4). |
+| b | El proveedor da recuentos por recomendación y solo la media del precio objetivo | Se guardan los cinco recuentos; `num_analysts`, `target_low`, `target_high` NULL si no vienen (§4). |
+| c | Short interest sin fecha de liquidación | Clave `(security_id, as_of_date)`, `settlement_date` nullable, deduplicación por valor (§5). |
+| d | Insiders: id por filing, solo EEUU | Sin cambio de esquema hasta tener payload (§2.c). |
+| e | Holders sin id estable | Clave con nombre normalizado vía `holder_name_norm()` (§2.b). |
+
+Todas las decisiones dejan el esquema válido tanto si la documentación acierta como si no: lo dudoso es nullable y lo que no se sabe no se interpreta.
 - `holder_type` (institution|fund): se queda como `CHECK` inline (dos valores, no justifica tabla). Subir a tabla de referencia solo si crece.
 - Capa de validación general (pendiente desde v1 del núcleo): outliers en transacciones de insiders, saltos de `shares_float` sospechosos, filas de ownership idénticas consecutivas.
