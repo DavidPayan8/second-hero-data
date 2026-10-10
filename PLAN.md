@@ -113,11 +113,12 @@ Especificación: `docs/modelo/modelo-general.md` y cada par de chunk. Migracione
 | `003_hechos` | FUNDAMENTALS, SHARES_OUTSTANDING, PRICES_DAILY, FX_RATES, STOCK_SPLIT, DIVIDEND, EARNINGS | núcleo, earnings |
 | `004_dividend_clave` | (cambio sobre DIVIDEND: clave `UNIQUE (security_id, ex_date)`) | `decisiones-modelo.md` §5.5 |
 | `005_ownership` | HOLDER_POSITION, INSIDER_TRANSACTION, OWNERSHIP_SNAPSHOT, ANALYST_CONSENSUS, SHORT_INTEREST | ownership |
-| `006_etf` | ETF_PROFILE, ETF_NAV_DAILY, ETF_HOLDING, ETF_ALLOCATION | etf |
-| `007_noticias` | NEWS, NEWS_SECURITY | noticias |
-| `008_normalizador` | INGESTION_RUN, PAYLOAD_BLOB, RAW_PAYLOAD, SOURCE_EXCHANGE, SOURCE_VENUE_MAP, SOURCE_HOLDER_MAP, SOURCE_SECTOR_MAP | ingesta, referencia, identidad, taxonomía |
-| `009_transversal` | DIMENSION_AUDIT, VALIDATION_RULE, DATA_QUALITY_FINDING | auditoría, validación |
-| `010_triggers` | ver abajo | etf, taxonomía, auditoría |
+| `006_holder_name_norm` | (cambio sobre `holder_name_norm()`: colapsa espacios internos; `REINDEX` del índice de `holder_position`) | `decisiones-modelo-ownership.md` §2.b |
+| `007_etf` | ETF_PROFILE, ETF_NAV_DAILY, ETF_HOLDING, ETF_ALLOCATION | etf |
+| `008_noticias` | NEWS, NEWS_SECURITY | noticias |
+| `009_normalizador` | INGESTION_RUN, PAYLOAD_BLOB, RAW_PAYLOAD, SOURCE_EXCHANGE, SOURCE_VENUE_MAP, SOURCE_HOLDER_MAP, SOURCE_SECTOR_MAP | ingesta, referencia, identidad, taxonomía |
+| `010_transversal` | DIMENSION_AUDIT, VALIDATION_RULE, DATA_QUALITY_FINDING | auditoría, validación |
+| `011_triggers` | ver abajo | etf, taxonomía, auditoría |
 
 Total: **36 tablas**.
 
@@ -133,7 +134,7 @@ Total: **36 tablas**.
 - `RAW_PAYLOAD.provider_symbol` es TEXT **sin FK** (desacople deliberado). `content_hash` FK a `PAYLOAD_BLOB`.
 - `DIMENSION_AUDIT` y `DATA_QUALITY_FINDING`: `target_table`/`row_id` **sin FK** (polimórficas a propósito).
 
-### Triggers (`010_triggers`)
+### Triggers (`011_triggers`)
 
 - **T1** `SECURITY` BEFORE INSERT/UPDATE: `ASSET_TYPE.requires_company = true` ⇒ `company_id` NOT NULL; `false` ⇒ NULL.
 - **T2** `ASSET_TYPE` BEFORE UPDATE: `requires_company` inmutable si el tipo ya tiene securities.
