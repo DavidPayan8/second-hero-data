@@ -5,6 +5,7 @@ Una entrada por fase o paso relevante: qué se hizo, cómo se comprobó (criteri
 | Fecha | Fase / paso | Resultado | Comprobación | Pendiente |
 |---|---|---|---|---|
 | 2026-10-10 | Preparación del repo | Diseño copiado a `docs/modelo/`, `PLAN.md` y `CLAUDE.md` creados. | — | Empezar Fase 0 y Fase 1. |
+| 2026-10-10 | Fase 0 mínima + Fase 1 parcial | Creados `package.json`, `tsconfig.json`, `src/config.ts`, `src/cli.ts`, `src/eodhd/{client,endpoints,capture,user}.ts`. `npm run capture` captura con límite de cuota (dry-run por defecto, `--go` para llamar). 35 llamadas reales con el plan Free. | `npm run typecheck` pasa. Los payloads están en `fixtures/eodhd/` con `manifest.json`. Costes de cuota contrastados con `/api/internal-user` (`apiRequests` coincidió con el conteo). | Sin Postgres, docker, vitest ni migraciones (resto de la Fase 0). C1 y otras 10 preguntas necesitan un plan con fundamentals; Fase 1 **no cerrada**, avisar a David. |
 
 ## Decisiones provisionales implementadas
 
