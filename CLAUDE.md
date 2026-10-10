@@ -21,6 +21,7 @@ El diseño del modelo está **cerrado y documentado** en `docs/modelo/`. Aquí s
 - **No cambiar el modelo por tu cuenta.** Si al implementar algo no encaja con los docs (un campo que EODHD no da, una restricción imposible, un hueco), **no adaptes el esquema en silencio**: escríbelo en `docs/propuestas-cambio-modelo.md` (qué, por qué, opciones) y pregunta a David. El diseño se decide en la conversación de diseño, no en el código.
 - **No inventar datos ni shapes.** La forma de cada respuesta de EODHD se toma de payloads reales capturados, nunca de memoria. Si un dato falta, se registra como ausente (NULL + procedencia explícita o finding), no se rellena.
 - **No guardar lo derivable.** Principio rector del modelo: si se puede calcular sin ambigüedad desde otros datos, no se almacena (va a VISTAS).
+- **Plugin/MCP de EODHD: para explorar, no para ingerir.** Si está instalado, úsalo para orientarte en la Fase 1. Pero la evidencia de `docs/verificacion-eodhd.md` sale de los payloads crudos capturados, y el normalizador llama a la API REST directamente con `fetch`: necesita el cuerpo HTTP exacto (hash → `PAYLOAD_BLOB`) y corre sin Claude. Lo que devuelve una herramienta MCP puede venir reformateado o recortado.
 - **Nunca subir al repo** la API key (`.env`) ni payloads crudos del proveedor (`fixtures/`, datos licenciados). Ambos están en `.gitignore`.
 - **Decisiones abiertas marcadas en `PLAN.md`** se implementan con su valor provisional, aislado en un único sitio fácil de cambiar, y anotado en `docs/registro.md`. No se tratan como definitivas.
 

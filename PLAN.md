@@ -74,6 +74,8 @@ Elegido para que cada símbolo ejercite una decisión del modelo. Confirmar los 
 
 Antes de nada, anotar qué endpoints cubre el plan contratado de la API key (fundamentales suele ir aparte).
 
+Si hay un plugin/MCP de EODHD instalado, puede usarse para explorar y localizar campos más rápido, pero **cada respuesta del informe se comprueba contra el fichero capturado** por `capture` (respuesta HTTP en bruto), y se cita esa ruta. El código del normalizador no depende del plugin.
+
 ### 1.3 Preguntas a contestar
 
 Rellenar `docs/verificacion-eodhd.md` (plantilla ya creada). Para cada pregunta: veredicto (sí / no / parcial), ruta exacta en el JSON, un valor de ejemplo e impacto en el modelo.
