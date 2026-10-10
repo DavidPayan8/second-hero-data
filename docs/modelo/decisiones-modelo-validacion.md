@@ -28,7 +28,7 @@ Una única tabla para **todo** lo que requiere revisión humana. Polimórfica (`
 
 - **Por qué no meter el SQL/código de la regla en BD:** antipatrón de mantenibilidad y seguridad (strings de consulta ejecutables en la BD). 
 - **Por qué sí el catálogo en BD:** permite **apagar una regla ruidosa** o **cambiar su severidad** (`warning`→`error`) en producción **al instante, sin desplegar**. Mismo equilibrio que `in_screener_scope`/`requires_company`: se datifica el on/off y la severidad (barato y útil), no la lógica (sobreingeniería).
-- Todos los productores emiten con un `rule_code` catalogado, **incluidas las marcas estructurales** (p. ej. `IDENTITY_ISOLATED`, `IDENTITY_RELINK_CONFLICT`, `HOLDER_UNMAPPED`, `SECTOR_UNMAPPED`) junto a las de calidad (`ACCOUNTING_BALANCE`, `YOY_JUMP`, `CURRENCY_COHERENCE`, `SECOND_SOURCE_MISMATCH`, `STALENESS`, `CORPORATE_EVENT_CHANGED`).
+- Todos los productores emiten con un `rule_code` catalogado, **incluidas las marcas estructurales** (p. ej. `IDENTITY_ISOLATED`, `IDENTITY_RELINK_CONFLICT`, `HOLDER_UNMAPPED`, `SECTOR_UNMAPPED`, `DIVIDEND_SAME_EX_DATE`) junto a las de calidad (`ACCOUNTING_BALANCE`, `YOY_JUMP`, `CURRENCY_COHERENCE`, `SECOND_SOURCE_MISMATCH`, `STALENESS`, `CORPORATE_EVENT_CHANGED`).
 
 ---
 
