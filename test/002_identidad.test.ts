@@ -13,7 +13,7 @@ const company = (c: pg.PoolClient, cols = 'legal_name, identity_source', vals = 
   id(c, `INSERT INTO company (${cols}) VALUES (${vals}) RETURNING company_id AS id`);
 const security = (c: pg.PoolClient, companyId: string | null, isin: string | null) =>
   id(c, "INSERT INTO security (company_id, asset_type_id, isin) VALUES ($1, (SELECT asset_type_id FROM asset_type WHERE code='common_stock'), $2) RETURNING security_id AS id", [companyId, isin]);
-const LISTING = "INSERT INTO listing (security_id, exchange_id, ticker, provider_symbol, quote_currency, is_primary_listing) VALUES ($1, (SELECT exchange_id FROM exchange WHERE mic='XNAS'), $2, $3, 'USD', $4)";
+const LISTING = "INSERT INTO listing (security_id, exchange_id, ticker, provider_symbol, quote_currency, is_primary_listing, status) VALUES ($1, (SELECT exchange_id FROM exchange WHERE mic='XNAS'), $2, $3, 'USD', $4, 'active')";
 
 test('existen las 4 tablas de identidad', async () => {
   const { rows } = await pool.query<{ table_name: string }>(
@@ -34,9 +34,13 @@ test('company: cik y lei únicos, varios NULL permitidos', () => inRollback(asyn
 test('company: identity_source en dominio y con su evidencia', () => inRollback(async (c) => {
   expect((await dbError(c, "INSERT INTO company (legal_name, identity_source) VALUES ('X','nombre')"))?.code).toBe('23514');
   expect((await dbError(c, "INSERT INTO company (legal_name) VALUES ('X')"))?.code).toBe('23502');
-  expect((await dbError(c, "INSERT INTO company (legal_name, identity_source) VALUES ('X','cik')"))?.message).toContain('company_identity_source_has_id');
-  expect((await dbError(c, "INSERT INTO company (legal_name, identity_source) VALUES ('X','lei')"))?.message).toContain('company_identity_source_has_id');
-  expect((await dbError(c, "INSERT INTO company (identity_source) VALUES ('isolated')"))?.code).toBe('23502');
+  expect((await dbError(c, "INSERT INTO company (legal_name, identity_source) VALUES ('X','cik')"))?.message).toContain('company_identity_source_consistent');
+  expect((await dbError(c, "INSERT INTO company (legal_name, identity_source) VALUES ('X','lei')"))?.message).toContain('company_identity_source_consistent');
+  // isolated exige cik y lei nulos
+  expect((await dbError(c, "INSERT INTO company (identity_source, cik) VALUES ('isolated','1')"))?.message).toContain('company_identity_source_consistent');
+  expect((await dbError(c, "INSERT INTO company (identity_source, lei) VALUES ('isolated','L9')"))?.message).toContain('company_identity_source_consistent');
+  expect((await dbError(c, "INSERT INTO company (identity_source, cik, lei) VALUES ('cik','1','L9')"))).toBeNull(); // cik con lei además: permitido
+  expect((await dbError(c, "INSERT INTO company (identity_source, cik) VALUES ('lei','2')"))?.message).toContain('company_identity_source_consistent'); // lei sin lei
 }));
 
 test('company: country_iso alfa-2, mes fiscal 1-12, FK de sector e industria', () => inRollback(async (c) => {
@@ -62,9 +66,9 @@ test('listing: provider_symbol único y campos obligatorios', () => inRollback(a
   const s = await security(c, await company(c), 'US1');
   await c.query(LISTING, [s, 'AAPL', 'AAPL.US', true]);
   expect((await dbError(c, LISTING, [s, 'AAPL', 'AAPL.US', false]))?.code).toBe('23505');
-  expect((await dbError(c, "INSERT INTO listing (security_id, ticker, provider_symbol) VALUES ($1,'X','X.US')", [s]))?.code).toBe('23502'); // sin quote_currency
-  expect((await dbError(c, "INSERT INTO listing (security_id, ticker, provider_symbol, quote_currency) VALUES (999999,'X','X.US','USD')"))?.code).toBe('23503');
-  expect((await dbError(c, "INSERT INTO listing (security_id, exchange_id, ticker, provider_symbol, quote_currency) VALUES ($1, 999999,'X','X.US','USD')", [s]))?.code).toBe('23503');
+  expect((await dbError(c, "INSERT INTO listing (security_id, ticker, provider_symbol, status) VALUES ($1,'X','X.US','active')", [s]))?.code).toBe('23502'); // sin quote_currency
+  expect((await dbError(c, "INSERT INTO listing (security_id, ticker, provider_symbol, quote_currency, status) VALUES (999999,'X','X.US','USD','active')"))?.code).toBe('23503');
+  expect((await dbError(c, "INSERT INTO listing (security_id, exchange_id, ticker, provider_symbol, quote_currency, status) VALUES ($1, 999999,'X','X.US','USD','active')", [s]))?.code).toBe('23503');
   const { rows } = await c.query("SELECT is_primary_listing FROM listing WHERE provider_symbol='AAPL.US'");
   expect(rows[0].is_primary_listing).toBe(true);
 }));
@@ -94,4 +98,27 @@ test('no se borra un registro referenciado', () => inRollback(async (c) => {
   await c.query(LISTING, [s, 'X', 'X.US', true]);
   expect((await dbError(c, 'DELETE FROM security WHERE security_id=$1', [s]))?.code).toBe('23503');
   expect((await dbError(c, 'DELETE FROM company WHERE company_id=$1', [co]))?.code).toBe('23503');
+}));
+
+test('company.legal_name es nullable (dato del proveedor)', () => inRollback(async (c) => {
+  await c.query("INSERT INTO company (identity_source) VALUES ('isolated')");
+  const { rows } = await c.query('SELECT legal_name FROM company');
+  expect(rows[0].legal_name).toBeNull();
+}));
+
+test('listing.status: obligatorio, solo active|delisted; status_date y exchange_id nullable', () => inRollback(async (c) => {
+  const s = await security(c, await company(c), 'US6');
+  const base = "INSERT INTO listing (security_id, ticker, provider_symbol, quote_currency, status) VALUES ($1,'T',$2,'USD',$3)";
+  expect((await dbError(c, "INSERT INTO listing (security_id, ticker, provider_symbol, quote_currency) VALUES ($1,'T','T1.US','USD')", [s]))?.code).toBe('23502');
+  expect((await dbError(c, base, [s, 'T2.US', 'inactive']))?.code).toBe('23514');
+  expect((await dbError(c, base, [s, 'T3.US', 'ACTIVE']))?.code).toBe('23514');
+  await c.query(base, [s, 'T4.US', 'active']);
+  await c.query(base, [s, 'T5.US', 'delisted']);
+  const { rows } = await c.query("SELECT status_date, exchange_id FROM listing WHERE provider_symbol='T5.US'");
+  expect(rows[0]).toEqual({ status_date: null, exchange_id: null }); // bolsa no resuelta + fecha de baja desconocida
+}));
+
+test('listing.quote_currency no se rellena por defecto', () => inRollback(async (c) => {
+  const s = await security(c, await company(c), 'US7');
+  expect((await dbError(c, "INSERT INTO listing (security_id, exchange_id, ticker, provider_symbol, status) VALUES ($1, (SELECT exchange_id FROM exchange WHERE mic='XLON'), 'SHEL','SHEL.LSE','active')", [s]))?.code).toBe('23502');
 }));

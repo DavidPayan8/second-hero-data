@@ -5,9 +5,11 @@
 
 -- Negocio emisor. Se agrupa por identificador oficial de emisor (CIK/LEI); sin id fiable, una COMPANY aislada
 -- por security. identity_source registra con qué evidencia se agrupó. sector_id/industry_id NULL = no clasificado.
+-- Restricciones de columnas: decisiones-modelo-identidad.md §8. legal_name es dato del proveedor (nullable):
+-- el nombre del símbolo no es el nombre legal del emisor y nunca se usa de relleno.
 CREATE TABLE company (
   company_id            bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  legal_name            text   NOT NULL,
+  legal_name            text,
   lei                   text   UNIQUE,
   cik                   text   UNIQUE,
   identity_source       text   NOT NULL CHECK (identity_source IN ('cik', 'lei', 'isolated')),
@@ -15,9 +17,12 @@ CREATE TABLE company (
   sector_id             bigint REFERENCES sector (sector_id),
   industry_id           bigint REFERENCES industry (industry_id),
   fiscal_year_end_month integer CHECK (fiscal_year_end_month BETWEEN 1 AND 12),
-  -- La evidencia declarada tiene que existir: no se agrupa "por cik" sin cik.
-  CONSTRAINT company_identity_source_has_id CHECK (
-    (identity_source <> 'cik' OR cik IS NOT NULL) AND (identity_source <> 'lei' OR lei IS NOT NULL)
+  -- La evidencia declarada tiene que existir y ser la única: cik => cik, lei => lei, isolated => ninguno.
+  -- Si a una company aislada se le añade un identificador, hay que actualizar identity_source.
+  CONSTRAINT company_identity_source_consistent CHECK (
+    (identity_source <> 'cik' OR cik IS NOT NULL) AND
+    (identity_source <> 'lei' OR lei IS NOT NULL) AND
+    (identity_source <> 'isolated' OR (cik IS NULL AND lei IS NULL))
   )
 );
 CREATE INDEX company_sector_id_idx   ON company (sector_id);
@@ -38,8 +43,9 @@ CREATE INDEX security_asset_type_id_idx ON security (asset_type_id);
 -- Cotización de una security en una bolsa. provider_symbol es el crosswalk del camino rápido (v1, un proveedor).
 -- quote_currency es la divisa nativa del símbolo (p. ej. GBX) y viene del proveedor símbolo a símbolo:
 -- nunca se rellena con EXCHANGE.default_currency.
--- exchange_id queda nullable de forma provisional (venue desconocido -> sin MIC, ver propuestas-cambio-modelo.md P4).
--- status/status_date: dominio sin definir en el modelo, sin CHECK de momento (P4).
+-- exchange_id nullable: NULL = bolsa no resuelta (venue desconocido) + finding VENUE_UNMAPPED.
+-- status: siempre se sabe de qué lista viene el símbolo; status_date NULL = fecha desconocida.
+-- Restricciones: decisiones-modelo-identidad.md §8.
 CREATE TABLE listing (
   listing_id         bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   security_id        bigint  NOT NULL REFERENCES security (security_id),
@@ -48,7 +54,7 @@ CREATE TABLE listing (
   provider_symbol    text    NOT NULL UNIQUE,
   quote_currency     text    NOT NULL,
   is_primary_listing boolean NOT NULL DEFAULT false,
-  status             text,
+  status             text    NOT NULL CHECK (status IN ('active', 'delisted')),
   status_date        date
 );
 CREATE INDEX listing_security_id_idx ON listing (security_id);
