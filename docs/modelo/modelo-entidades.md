@@ -54,11 +54,11 @@ erDiagram
 
   EXCHANGE {
     bigint exchange_id PK
-    text mic UK "ISO 10383 (XNAS, XNYS, XMAD...) = bolsa real"
-    text country_iso
-    text default_currency
-    text timezone "IANA, ej. America/New_York (para disparo por cierre)"
-    time close_time "hora local de cierre (disparo de materializacion)"
+    text mic UK "ISO 10383 (XNAS, XNYS, XMAD...) = bolsa real ; NOT NULL"
+    text country_iso "NOT NULL, CHECK ^[A-Z]{2}$ (alfa-2)"
+    text default_currency "NOT NULL ; descriptiva, NUNCA rellena LISTING.quote_currency"
+    text timezone "NOT NULL ; IANA, ej. America/New_York (disparo por cierre)"
+    time close_time "NOT NULL ; hora local de cierre (disparo de materializacion)"
   }
 
   ASSET_TYPE {
@@ -156,7 +156,7 @@ erDiagram
 | **STOCK_SPLIT** | SECURITY | Splits (`split_numerator`/`split_denominator` nativos). Base del ajuste. |
 | **DIVIDEND** | SECURITY | Dividendos (`amount_native` = unadjustedValue). Base del total-return. |
 | **PRICES_DAILY** | LISTING | Solo OHLCV **bruto**, divisa nativa. Inmutable. |
-| **EXCHANGE** | — | Bolsa real, clave = MIC. No el código de proveedor. `timezone`+`close_time` para el disparo de materialización por cierre (ver chunk de referencia). El mapa código-proveedor↔MIC vive en la capa del normalizador, no aquí. |
+| **EXCHANGE** | — | Bolsa real, clave = MIC. No el código de proveedor. `timezone`+`close_time` para el disparo de materialización por cierre (ver chunk de referencia). El mapa código-proveedor↔MIC vive en la capa del normalizador, no aquí. **Dato curado: todas sus columnas NOT NULL; solo se crea desde el seed, nunca desde el normalizador** (`decisiones-modelo-referencia.md` §5). |
 | **ASSET_TYPE** | — | Catálogo de tipos. `in_screener_scope` filtra el screener; `requires_company` gobierna si `SECURITY.company_id` debe ser NOT NULL (enforcado por trigger, ver `decisiones-modelo-etf.md` §1). |
 | **LISTING_TICKER_CHANGE** | LISTING | Historial de tickers (SEO / no confundir con deslistado). Prescindible en MVP. |
 | **FX_RATES** | — | Tipos de cambio a EUR. GBX como fila propia. Forward-fill. |

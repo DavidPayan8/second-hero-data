@@ -29,6 +29,7 @@ El diseño del modelo está **cerrado y documentado** en `docs/modelo/`. Aquí s
 
 - Node 22 + TypeScript (`strict`). `npm`. Sin ORM: el modelo usa triggers, tablas bitemporales y dos tablas polimórficas que un ORM pelearía.
 - Postgres 16 vía `docker compose`. Driver `pg`. Migraciones = ficheros SQL numerados en `db/migrations/` + un runner mínimo propio.
+- **Una migración publicada en `origin` es inmutable**: cualquier corrección va en una migración nueva. Mientras solo exista en local (sin push) se puede reescribir y aplicar con `db:reset`.
 - Tests con `vitest` **contra Postgres real** (los triggers tienen que probarse de verdad, nada de mocks de BD).
 - IDs `bigint generated always as identity`. Dominios cerrados con `TEXT + CHECK` (no `ENUM`). Importes y cantidades `numeric` (nunca float). Fechas-hora `timestamptz`.
 - HTTP con `fetch` nativo. Configuración por `.env` (ver `.env.example`).

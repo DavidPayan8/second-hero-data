@@ -66,6 +66,21 @@ Es su sitio natural: son propiedades de la bolsa real, no del proveedor. Refleja
 
 ---
 
+## 5. `EXCHANGE` es dato curado: todas sus columnas son obligatorias
+
+Decidido al implementar la migración (2026-10-10).
+
+**Columnas:** `mic`, `country_iso`, `default_currency`, `timezone` y `close_time` son **NOT NULL**. `country_iso` lleva `CHECK (country_iso ~ '^[A-Z]{2}$')` (ISO 3166-1 alfa-2, mismo formato que `COMPANY.country_iso`).
+
+**Por qué NOT NULL no contradice "no inventar datos":** esa regla protege los datos *del proveedor*, hechos sobre valores que solo conocemos si EODHD los da. `EXCHANGE` es dato de referencia que **escribimos nosotros** desde estándares (ISO 10383 para MIC y país, IANA para la zona horaria, el horario oficial de la bolsa). Toda bolsa real tiene los cinco. Un NULL aquí no expresaría "no se sabe", sino una carga incompleta, y fallaría tarde y en silencio: sin `timezone`/`close_time` no se dispara la materialización al cierre de esa bolsa. Con NOT NULL falla al cargar la referencia, que es cuando hay que enterarse.
+
+**Reglas que acompañan a la restricción:**
+- **El normalizador nunca crea filas de `EXCHANGE`.** Solo se crean desde la carga curada (seed). Un símbolo de una bolsa que no tenemos produce el finding `VENUE_UNMAPPED`, no una fila a medias. Así el NOT NULL nunca bloquea la ingesta: obliga a curar la bolsa antes.
+- **`default_currency` es descriptiva y nunca rellena `LISTING.quote_currency`.** La divisa de cotización viene del proveedor, símbolo a símbolo. La verificación en vivo lo confirmó: en `SHEL.LSE` el precio llega en GBX y el dividendo en GBP, y las filas de `eod` no traen divisa; la divisa "por defecto" de la bolsa no dice en qué unidad viene una serie concreta.
+- **`timezone` válida:** se comprueba en un test contra `pg_timezone_names` (un CHECK no puede consultar otra tabla).
+
+---
+
 ## Pendiente / verificar en vivo
 
 - Nombre y valores exactos del campo de sub-bolsa por símbolo en `exchange-symbol-list` de EODHD (para poblar `SOURCE_VENUE_MAP`).

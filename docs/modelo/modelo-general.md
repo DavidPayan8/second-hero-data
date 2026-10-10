@@ -168,10 +168,10 @@ erDiagram
   EXCHANGE {
     bigint exchange_id PK
     text mic UK "ISO 10383 = bolsa real, no codigo proveedor"
-    text country_iso
-    text default_currency
-    text timezone "IANA (disparo por cierre)"
-    time close_time "hora local de cierre"
+    text country_iso "NOT NULL, alfa-2"
+    text default_currency "NOT NULL, descriptiva"
+    text timezone "NOT NULL, IANA (disparo por cierre)"
+    time close_time "NOT NULL, hora local de cierre"
   }
 
   ASSET_TYPE {
