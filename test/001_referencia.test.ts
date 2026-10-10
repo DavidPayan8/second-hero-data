@@ -15,17 +15,17 @@ test('existen las 4 tablas de referencia', async () => {
 });
 
 test('asset_type: code único y flags obligatorios', () => inRollback(async (c) => {
-  await c.query("INSERT INTO asset_type (code, in_screener_scope, requires_company) VALUES ('common_stock', true, true)");
-  expect((await dbError(c, "INSERT INTO asset_type (code, in_screener_scope, requires_company) VALUES ('common_stock', true, true)"))?.code).toBe('23505');
-  expect((await dbError(c, "INSERT INTO asset_type (code, in_screener_scope) VALUES ('etf', true)"))?.code).toBe('23502');
+  await c.query("INSERT INTO asset_type (code, in_screener_scope, requires_company) VALUES ('t_stock', true, true)");
+  expect((await dbError(c, "INSERT INTO asset_type (code, in_screener_scope, requires_company) VALUES ('t_stock', true, true)"))?.code).toBe('23505');
+  expect((await dbError(c, "INSERT INTO asset_type (code, in_screener_scope) VALUES ('t_etf', true)"))?.code).toBe('23502');
 }));
 
-const EXCHANGE_OK = "INSERT INTO exchange (mic, country_iso, default_currency, timezone, close_time) VALUES ('XNAS','US','USD','America/New_York','16:00')";
+const EXCHANGE_OK = "INSERT INTO exchange (mic, country_iso, default_currency, timezone, close_time) VALUES ('XTST','US','USD','America/New_York','16:00')";
 
 test('exchange: mic único y las cinco columnas obligatorias', () => inRollback(async (c) => {
   await c.query(EXCHANGE_OK);
   expect((await dbError(c, EXCHANGE_OK))?.code).toBe('23505');
-  const { rows } = await c.query("SELECT close_time::text AS t FROM exchange WHERE mic='XNAS'");
+  const { rows } = await c.query("SELECT close_time::text AS t FROM exchange WHERE mic='XTST'");
   expect(rows[0].t).toBe('16:00:00');
   for (const col of ['country_iso', 'default_currency', 'timezone', 'close_time']) {
     const cols = ['mic', 'country_iso', 'default_currency', 'timezone', 'close_time'].filter((x) => x !== col);

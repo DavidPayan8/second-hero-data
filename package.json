@@ -10,8 +10,9 @@
     "typecheck": "tsc --noEmit",
     "db:up": "docker compose up -d --wait",
     "db:migrate": "tsx src/db/migrate-cli.ts",
-    "db:reset": "docker compose down -v && docker compose up -d --wait && tsx src/db/migrate-cli.ts",
-    "test": "vitest run"
+    "db:reset": "docker compose down -v && docker compose up -d --wait && tsx src/db/migrate-cli.ts && tsx src/db/seed-cli.ts",
+    "test": "vitest run",
+    "db:seed": "tsx src/db/seed-cli.ts"
   },
   "dependencies": {
     "dotenv": "^18.0.7",
