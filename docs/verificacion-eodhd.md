@@ -127,6 +127,13 @@ Confirmado con datos reales.
 
 Sin captura: `insider-transactions`, holders, analistas, bloque ETF y earnings quedan fuera del plan Free (confirmado por la tabla de `references/subscriptions/free.md` del plugin y por el 403 de fundamentals). Pendiente de plan de pago.
 
+Lo que dice la **documentación del plugin `eodhd-api` 0.8.0** (no es evidencia: no hay payload capturado), útil para saber qué buscar:
+
+- **C8, id estable de insider:** el endpoint de Form 4 trae `accession_number` por filing (no por transacción) y `reporting_owner_cik`; el feed plano no trae id de transacción. Ver propuesta P6 (d).
+- **C9, id estable de holder:** la sección `Holders` trae `name`, `date`, `totalShares`, `totalAssets`, `currentShares`, `change`, `change_p` y ningún id. Ver P6 (e).
+- **C10, escala del rating:** la doc dice 5 = Strong Buy, 1 = Strong Sell, lo contrario de lo que asume el modelo. Ver P6 (a). **Es la contradicción más importante de esta lista.**
+- **C11 y C12:** sin lectura hecha de la doc del plugin.
+
 ### C13 — News
 
 `news?s=AAPL.US&limit=10` → 10 artículos. Campos: `date`, `title`, `content`, `link`, `symbols`, `tags`, `sentiment`.
