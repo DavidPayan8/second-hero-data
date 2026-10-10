@@ -61,7 +61,7 @@ Poblada por **trigger** `AFTER INSERT/UPDATE/DELETE` en las tablas auditadas (ca
 
 ## 5. Qué se audita
 
-- **Sí (v1):** `COMPANY`, `SECURITY`, `LISTING`, `EXCHANGE`, `ASSET_TYPE`.
+- **Sí (v1):** `COMPANY`, `SECURITY`, `LISTING`, `EXCHANGE`, `ASSET_TYPE`, **`ETF_PROFILE`** (es una dimensión mutable y su historial de `expense_ratio` depende de este log; faltaba en la primera versión de esta lista), `SECTOR`, `INDUSTRY`, `VALIDATION_RULE`.
 - **Recomendado:** las tablas de referencia `SOURCE_EXCHANGE`, `SOURCE_VENUE_MAP`, `SOURCE_HOLDER_MAP` — también son dimensiones mutables, y corregir un mapeo MIC es justo lo que querrás auditar.
 - **No:** las tablas de hechos (bitemporales / snapshot-temporal / append-only) — ya conservan su historial por diseño. Auditarlas sería redundante.
 

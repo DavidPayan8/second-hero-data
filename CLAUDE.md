@@ -31,7 +31,7 @@ El diseño del modelo está **cerrado y documentado** en `docs/modelo/`. Aquí s
 - Postgres 16 vía `docker compose`. Driver `pg`. Migraciones = ficheros SQL numerados en `db/migrations/` + un runner mínimo propio.
 - **Una migración publicada en `origin` es inmutable**: cualquier corrección va en una migración nueva. Mientras solo exista en local (sin push) se puede reescribir y aplicar con `db:reset`.
 - Tests con `vitest` **contra Postgres real** (los triggers tienen que probarse de verdad, nada de mocks de BD).
-- IDs `bigint generated always as identity`. Dominios cerrados con `TEXT + CHECK` (no `ENUM`). Importes y cantidades `numeric` (nunca float). Fechas-hora `timestamptz`.
+- IDs `bigint generated always as identity`. Dominios cerrados con `TEXT + CHECK` (no `ENUM`). Importes y cantidades que mide el proveedor (precios, acciones, volumen) `numeric`, nunca float: pueden venir con decimales. Los recuentos de cosas discretas (p. ej. número de analistas) son `integer`. Fechas-hora `timestamptz`.
 - **CHECK de dominio solo para vocabularios que define el modelo** (`period_type`, `reported_at_source`, `status`, `identity_source`…). Los vocabularios del proveedor (p. ej. `DIVIDEND.period`: `Quarterly`, `Annual`, `Interim`, `Final`, `Other`) se guardan como texto **sin CHECK**: una etiqueta nueva de EODHD no puede tumbar la ingesta.
 - **Criterio de NULL** (`docs/modelo/decisiones-modelo-identidad.md` §8): dato curado por nosotros → `NOT NULL`; dato del proveedor → nullable si falta, **salvo** que sin él la fila sea peligrosa o no signifique nada (entonces `NOT NULL` y la fila no se crea). Aplícalo columna a columna; abre propuesta solo si de verdad es ambiguo.
 - HTTP con `fetch` nativo. Configuración por `.env` (ver `.env.example`).

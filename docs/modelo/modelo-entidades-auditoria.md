@@ -48,7 +48,7 @@ Líneas punteadas = relación **lógica por trigger**, no FK real (`table_name`+
 
 ## Qué audita
 
-- **Sí (v1):** `COMPANY`, `SECURITY`, `LISTING`, `EXCHANGE`, `ASSET_TYPE`.
+- **Sí (v1):** `COMPANY`, `SECURITY`, `LISTING`, `EXCHANGE`, `ASSET_TYPE`, `ETF_PROFILE`, `SECTOR`, `INDUSTRY`, `VALIDATION_RULE`.
 - **Recomendado:** `SOURCE_EXCHANGE`, `SOURCE_VENUE_MAP`, `SOURCE_HOLDER_MAP` (dimensiones mutables de referencia).
 - **No:** tablas de hechos (ya son históricas por diseño).
 
