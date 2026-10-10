@@ -107,10 +107,10 @@ test('stock_split: UNIQUE (security, ex_date), numerador y denominador > 0 y no 
 
 test('dividend: amount_native y currency obligatorios, period libre, sin columna ajustada', () => inRollback(async (c) => {
   const s = await security(c, await company(c));
-  const D = "INSERT INTO dividend (security_id, ex_date, period, amount_native, currency) VALUES ($1,'2026-08-10',$2,0.27,'USD')";
-  await c.query(D, [s, 'Quarterly']);
-  await c.query(D, [s, 'Etiqueta nueva del proveedor']); // vocabulario del proveedor: sin CHECK
-  await c.query("INSERT INTO dividend (security_id, ex_date, amount_native, currency) VALUES ($1,'2026-08-10',0.1,'USD')", [s]); // period NULL, mismo ex_date pero otro period
+  const D = "INSERT INTO dividend (security_id, ex_date, period, amount_native, currency) VALUES ($1,$2,$3,0.27,'USD')";
+  await c.query(D, [s, '2026-08-10', 'Quarterly']);
+  await c.query(D, [s, '2026-09-10', 'Etiqueta nueva del proveedor']); // vocabulario del proveedor: sin CHECK
+  await c.query("INSERT INTO dividend (security_id, ex_date, amount_native, currency) VALUES ($1,'2026-10-10',0.1,'USD')", [s]); // period NULL
   expect((await dbError(c, "INSERT INTO dividend (security_id, ex_date, currency) VALUES ($1,'2026-08-11','USD')", [s]))?.code).toBe('23502');
   expect((await dbError(c, "INSERT INTO dividend (security_id, ex_date, amount_native) VALUES ($1,'2026-08-11',0.1)", [s]))?.code).toBe('23502');
   await c.query("INSERT INTO dividend (security_id, ex_date, amount_native, currency) VALUES ($1,'2026-11-09',0.2725,'GBP')", [s]);
@@ -140,18 +140,19 @@ test('earnings: PK natural, report_time en dominio con default unknown, estimaci
   expect(await columns('earnings')).not.toContain('eps_actual');
 }));
 
-test('P5: clave del dividendo (security_id, ex_date, period) con NULLS NOT DISTINCT', () => inRollback(async (c) => {
+test('P5: clave del dividendo (security_id, ex_date); ni period ni importe entran en la clave', () => inRollback(async (c) => {
   const s = await security(c, await company(c));
   const D = "INSERT INTO dividend (security_id, ex_date, period, amount_native, currency) VALUES ($1,'2026-08-10',$2,$3,'USD')";
   await c.query(D, [s, 'Quarterly', 0.27]);
-  expect((await dbError(c, D, [s, 'Quarterly', 0.27]))?.code).toBe('23505'); // mismo (security, ex_date, period)
-  expect((await dbError(c, D, [s, 'Quarterly', 0.99]))?.code).toBe('23505'); // el importe no entra en la clave: una corrección no crea otra fila
-  await c.query(D, [s, 'Other', 1.5]); // misma fecha, otro period: ordinario + extraordinario
-  await c.query(D, [s, null, 0.1]);
-  expect((await dbError(c, D, [s, null, 0.2]))?.code).toBe('23505'); // dos con period NULL la misma fecha
+  expect((await dbError(c, D, [s, 'Quarterly', 0.27]))?.code).toBe('23505'); // mismo (security, ex_date)
+  expect((await dbError(c, D, [s, 'Quarterly', 0.99]))?.code).toBe('23505'); // el importe no entra en la clave
+  expect((await dbError(c, D, [s, 'Other', 1.5]))?.code).toBe('23505'); // misma fecha con distinto period -> error
+  expect((await dbError(c, D, [s, null, 0.1]))?.code).toBe('23505'); // period NULL tampoco abre hueco
   const s2 = await security(c, await company(c));
-  await c.query(D, [s2, 'Quarterly', 0.27]); // otra security, misma fecha y period
+  await c.query(D, [s2, 'Quarterly', 0.27]); // otra security, misma fecha
   await c.query("INSERT INTO dividend (security_id, ex_date, period, amount_native, currency) VALUES ($1,'2026-11-09','Quarterly',0.27,'USD')", [s]); // otra fecha
+  const { rows } = await pool.query("SELECT conname FROM pg_constraint WHERE conrelid='dividend'::regclass AND contype='u' ORDER BY 1");
+  expect(rows.map((r) => r.conname)).toEqual(['dividend_security_id_ex_date_key']); // la clave antigua ya no existe
 }));
 
 test('cantidades numeric: acciones fraccionarias y volumen decimal no se rechazan', () => inRollback(async (c) => {
