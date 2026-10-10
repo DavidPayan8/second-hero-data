@@ -132,7 +132,8 @@ Lo que dice la **documentación del plugin `eodhd-api` 0.8.0** (no es evidencia:
 - **C8, id estable de insider:** el endpoint de Form 4 trae `accession_number` por filing (no por transacción) y `reporting_owner_cik`; el feed plano no trae id de transacción. Ver propuesta P6 (d).
 - **C9, id estable de holder:** la sección `Holders` trae `name`, `date`, `totalShares`, `totalAssets`, `currentShares`, `change`, `change_p` y ningún id. Ver P6 (e).
 - **C10, escala del rating:** la doc dice 5 = Strong Buy, 1 = Strong Sell, lo contrario de lo que asume el modelo. Ver P6 (a). **Es la contradicción más importante de esta lista.**
-- **C11 y C12:** sin lectura hecha de la doc del plugin.
+- **C11, bloque ETF** (`fundamentals-etf.md`, `ETF_Data`): no documenta NAV diario; `Holdings` viene indexado por símbolo (`AAPL.US`) con `Code`, `Exchange`, `Name`, `Sector`, `Industry`, `Country`, `Region` y `Assets_%`, **sin ISIN del constituyente**, sin importe ni acciones y sin fecha; las allocations (`Sector_Weights`, `World_Regions`, `Asset_Allocation`, `Market_Capitalisation`) llevan los pesos como cadenas; las etiquetas de sector son de estilo Morningstar (`Consumer Cyclicals`, `Financial Services`). Ver P7.
+- **C12:** sin lectura hecha de la doc del plugin.
 
 ### C13 — News
 
