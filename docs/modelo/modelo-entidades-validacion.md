@@ -51,6 +51,7 @@ erDiagram
 | `IDENTITY_RELINK_CONFLICT` | structural | error | Identidad (id contradice enlace) |
 | `HOLDER_UNMAPPED` | structural | warning | Ownership (holder sin `holder_ref`) |
 | `SECTOR_UNMAPPED` | structural | warning | Taxonomía (label proveedor sin mapeo; aplica a `COMPANY` y a `ETF_ALLOCATION.bucket`) |
+| `CORPORATE_EVENT_CHANGED` | data_quality | warning | Normalizador: un dividendo o split ya guardado llega con otro valor; se actualiza y el finding guarda anterior y nuevo (`decisiones-modelo.md` §5.5) |
 
 ## Consumo por VISTAS (cortafuegos)
 

@@ -26,7 +26,7 @@ erDiagram
     numeric nav
     text nav_currency "explicito"
     numeric aum "net_assets"
-    bigint shares_outstanding_etf "creation/redemption, NO bitemporal"
+    numeric shares_outstanding_etf "creation/redemption, NO bitemporal"
   }
 
   ETF_HOLDING {
@@ -38,7 +38,7 @@ erDiagram
     text constituent_name "fallback / display"
     numeric weight_pct "NOT NULL: define el holding"
     numeric market_value "nullable (dato adicional del proveedor)"
-    bigint shares_held "nullable (dato adicional, no redundante con market_value)"
+    numeric shares_held "nullable (dato adicional, no redundante con market_value)"
   }
 
   ETF_ALLOCATION {

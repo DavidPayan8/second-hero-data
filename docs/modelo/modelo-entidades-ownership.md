@@ -17,7 +17,7 @@ erDiagram
     text holder_name "display + fallback de identidad"
     text holder_type "institution | fund (CHECK)"
     date as_of_date "eje snapshot-temporal, historico conservado"
-    bigint shares_held
+    numeric shares_held
     numeric portfolio_weight_pct "nullable, no derivable por nosotros"
     timestamptz ingested_at "auditoria de pipeline, no eje temporal"
   }
@@ -39,7 +39,7 @@ erDiagram
   OWNERSHIP_SNAPSHOT {
     bigint security_id PK "FK"
     date as_of_date PK "eje snapshot-temporal, historico conservado"
-    bigint shares_float "nullable, no derivable"
+    numeric shares_float "nullable, no derivable"
     numeric percent_insiders "nullable, no derivable"
     numeric percent_institutions "nullable, no derivable"
   }
@@ -58,8 +58,8 @@ erDiagram
   SHORT_INTEREST {
     bigint security_id PK "FK"
     date settlement_date PK "eje snapshot-temporal, nativa de la bolsa"
-    bigint shares_short "primitivo: de aqui cuelgan los derivados"
-    bigint shares_short_prior_month "nullable, SOLO fallback de arranque (no primitivo, ver decisiones 5.b)"
+    numeric shares_short "primitivo: de aqui cuelgan los derivados"
+    numeric shares_short_prior_month "nullable, SOLO fallback de arranque (no primitivo, ver decisiones 5.b)"
   }
 ```
 

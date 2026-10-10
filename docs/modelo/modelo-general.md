@@ -204,7 +204,7 @@ erDiagram
     date period_end
     date reported_at "point-in-time"
     text reported_at_source
-    bigint shares
+    numeric shares
   }
 
   STOCK_SPLIT {
@@ -246,7 +246,7 @@ erDiagram
     numeric high "bruto"
     numeric low "bruto"
     numeric close "bruto"
-    bigint volume
+    numeric volume
   }
 
   FX_RATES {
@@ -270,7 +270,7 @@ erDiagram
     text holder_name "display + fallback"
     text holder_type "institution|fund (CHECK)"
     date as_of_date "snapshot-temporal"
-    bigint shares_held
+    numeric shares_held
     numeric portfolio_weight_pct "nullable"
     timestamptz ingested_at
   }
@@ -292,7 +292,7 @@ erDiagram
   OWNERSHIP_SNAPSHOT {
     bigint security_id PK "FK"
     date as_of_date PK "snapshot-temporal"
-    bigint shares_float "nullable, no derivable"
+    numeric shares_float "nullable, no derivable"
     numeric percent_insiders "nullable"
     numeric percent_institutions "nullable"
   }
@@ -311,8 +311,8 @@ erDiagram
   SHORT_INTEREST {
     bigint security_id PK "FK"
     date settlement_date PK "snapshot-temporal"
-    bigint shares_short "primitivo"
-    bigint shares_short_prior_month "nullable, solo fallback arranque"
+    numeric shares_short "primitivo"
+    numeric shares_short_prior_month "nullable, solo fallback arranque"
   }
 
   ETF_PROFILE {
@@ -331,7 +331,7 @@ erDiagram
     numeric nav
     text nav_currency "explicito"
     numeric aum
-    bigint shares_outstanding_etf "creation/redemption"
+    numeric shares_outstanding_etf "creation/redemption"
   }
 
   ETF_HOLDING {
@@ -343,7 +343,7 @@ erDiagram
     text constituent_name "fallback/display"
     numeric weight_pct "NOT NULL: define el holding"
     numeric market_value "nullable"
-    bigint shares_held "nullable"
+    numeric shares_held "nullable"
   }
 
   ETF_ALLOCATION {

@@ -96,7 +96,7 @@ erDiagram
     date period_end
     date reported_at "point-in-time (consistencia)"
     text reported_at_source "mismo dominio que FUNDAMENTALS"
-    bigint shares
+    numeric shares
   }
 
   STOCK_SPLIT {
@@ -126,7 +126,7 @@ erDiagram
     numeric high "bruto"
     numeric low "bruto"
     numeric close "bruto"
-    bigint volume
+    numeric volume
   }
 
   LISTING_TICKER_CHANGE {

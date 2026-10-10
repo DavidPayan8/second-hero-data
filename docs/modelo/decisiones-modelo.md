@@ -141,6 +141,19 @@ El ratio de EODHD es un string `"N/M"` y **no siempre es entero limpio** (`"1748
 
 El precio total-return y el dividendo ajustado deben derivarse con **la misma cascada de factores de split**. Si usan cadenas distintas, se descuadran entre sí y el rendimiento total sale inconsistente. Regla: **una única función de factores acumulados**, consumida por precio-TR y por dividendo ajustado.
 
+### 5.5 Clave natural de los eventos y correcciones del proveedor
+
+Decidido al implementar la migración `003_hechos` (2026-10-10, propuesta P5). Los eventos tienen `id` sintético, pero los escritores del normalizador tienen que ser idempotentes, así que cada tabla lleva una clave natural:
+
+- **`STOCK_SPLIT`: `UNIQUE (security_id, ex_date)`.** No hay dos splits de un mismo valor el mismo día.
+- **`DIVIDEND`: `UNIQUE (security_id, ex_date, period) NULLS NOT DISTINCT`.** `period` distingue un dividendo ordinario y uno extraordinario con la misma fecha ex. El **importe no entra en la clave**: si el proveedor corrige un importe, con el importe en la clave aparecería una segunda fila y el total-return contaría el dividendo dos veces. Evidencia (débil): en 5 valores y 301 dividendos capturados no se repite ni la fecha ni `(fecha, period)`.
+
+**Correcciones del proveedor.** Un hecho puntual no debería cambiar. Si un refetch trae un evento ya guardado con otro valor (`amount_native`/`currency` en un dividendo, numerador/denominador en un split), el escritor **actualiza** la fila y emite el finding `CORPORATE_EVENT_CHANGED` (`data_quality`, `warning`) con el valor anterior y el nuevo en `detail`. Se acepta la corrección, pero queda rastro y se revisa.
+
+**Pendiente de verificar con los fixtures:** que el `date` de `div/` sea la fecha ex. En EEUU, desde la liquidación T+1 (28/05/2024), fecha ex y fecha de registro coinciden, que es por lo que en AAPL `date` = `recordDate`. En los dividendos anteriores (T+2) `date` debe quedar un día hábil antes de `recordDate`; si no, el campo no es la fecha ex y hay que revisar el mapeo.
+
+**Tipos:** las cantidades (acciones, volumen) son `numeric`, como los importes. `bigint` solo para identificadores; un valor fraccionario del proveedor no puede tumbar la ingesta.
+
 ---
 
 ## 6. Divisas: fx_rates
