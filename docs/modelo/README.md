@@ -10,7 +10,7 @@
 | `decisiones-modelo-ownership.md` + `modelo-entidades-ownership.md` | Ownership institucional/insider, consenso de analistas, short interest. |
 | `decisiones-modelo-etf.md` + `modelo-entidades-etf.md` | ETFs: perfil, NAV, holdings, allocation. |
 | `decisiones-modelo-earnings.md` + `modelo-entidades-earnings.md` | Earnings: calendario de resultados, fecha de reporte, EPS/revenue estimado por periodo. |
-| `decisiones-modelo-taxonomia.md` + `modelo-entidades-taxonomia.md` | Taxonomía sectorial canónica propia (Opción C): `SECTOR` + `INDUSTRY` (dos niveles) + `SOURCE_SECTOR_MAP`. Sustituye el texto libre de `COMPANY` por `sector_id`/`industry_id` (nullable, trigger de consistencia). Dependencia dura del Business Score. |
+| `decisiones-modelo-taxonomia.md` + `modelo-entidades-taxonomia.md` | Taxonomía sectorial canónica propia (Opción C): `SECTOR` + `INDUSTRY` (dos niveles) + `SOURCE_SECTOR_MAP`. Sustituye el texto libre de `COMPANY` por `sector_id`/`industry_id` (nullable, consistencia por FK compuesta). Dependencia dura del Business Score. |
 
 ## Normalizador / ingesta (capa anterior a la fuente de verdad)
 

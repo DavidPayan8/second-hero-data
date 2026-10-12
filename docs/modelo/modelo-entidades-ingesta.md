@@ -25,11 +25,12 @@ erDiagram
     text endpoint "ruta del proveedor"
     text provider_symbol "ej. AAPL.US ; NULL en llamadas a nivel de bolsa. TEXTO, no FK"
     jsonb params "params de la llamada"
-    int http_status
-    text content_hash FK "a PAYLOAD_BLOB"
+    int http_status "NULL si no hubo respuesta"
+    text content_hash FK "a PAYLOAD_BLOB; NULL si no hubo respuesta"
     timestamptz fetched_at "METADATA: para siempre"
-    text parse_status "pending | ok | error"
-    text parse_error "nullable"
+    text parse_status "pending | ok | error; NULL si no hubo respuesta"
+    text parse_error "NOT NULL sii parse_status = error"
+    text transport_error "NOT NULL sii no hubo respuesta (timeout, conexión)"
   }
 
   PAYLOAD_BLOB {

@@ -20,6 +20,11 @@ Es la capa anterior a la fuente de verdad. Dirección del flujo: **proveedor →
 
 `RAW_PAYLOAD` = una fila por *request* (endpoint + símbolo/exchange + params + respuesta). Es la unidad natural de "lo que trajo una llamada". Una ingesta diaria de un mercado son miles de filas. (Decisión: grano por-llamada, al menos en v1.)
 
+**Llamadas sin respuesta (2026-10-12, migración 010):** un fallo de transporte (timeout, conexión cortada, DNS) también es una fila: la llamada existió, y el orquestador necesita saber qué símbolos reintentar. En esa fila `http_status`, `content_hash` y `parse_status` son NULL (no hay cuerpo que guardar ni que parsear) y `transport_error` lleva el mensaje. CHECK: los cuatro van a la vez, o hay respuesta (`http_status`, `content_hash`, `parse_status` NOT NULL, `transport_error` NULL) o no la hay (al revés). Una respuesta HTTP de error (404, 429, 500) **sí** es respuesta: tiene cuerpo, se guarda en `PAYLOAD_BLOB` y lleva su `http_status`.
+
+- `parse_error` NOT NULL **si y solo si** `parse_status = 'error'`.
+- `INGESTION_RUN.finished_at` NULL si y solo si `status = 'running'`. Una corrida cuyo proceso muere se queda en `running`: el orquestador (Fase 3) la cierra como `failed` al arrancar la siguiente del mismo `scope`.
+
 ---
 
 ## 2. Corrida de ingesta como padre: `INGESTION_RUN`

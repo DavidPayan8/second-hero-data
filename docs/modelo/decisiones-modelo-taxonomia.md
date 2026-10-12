@@ -42,12 +42,13 @@ Un registro `unclassified` en la dimensión canónica contaminaría una tabla de
 
 ---
 
-## 4. Dos FK independientes + trigger de consistencia
+## 4. Dos FK independientes + consistencia por FK compuesta
 
 `COMPANY` gana `sector_id` **e** `industry_id`, ambos FK nullable, **independientes**:
 
 - **Independientes** porque el proveedor puede dar sector mapeable sin industria mapeable (o al revés). Hay que poder registrar "sector conocido, industria desconocida" (`industry_id NULL`, `sector_id` puesto) sin perder la empresa del ranking.
 - **Pero `industry_id` determina su sector** (`INDUSTRY.sector_id`). Por "no se almacena lo derivable sin ambigüedad", tener ambos invita a la deriva (que `COMPANY.sector_id` discrepe de `INDUSTRY.sector_id`). La guarda es la misma lección del CHECK de `asset_type`: **un CHECK no ve otra tabla → es un trigger**. Cuando ambos están puestos, el trigger en `COMPANY` exige `COMPANY.sector_id = INDUSTRY.sector_id`. Conocimiento parcial permitido, drift bloqueado.
+- **Actualización (2026-10-12, migración 010):** la guarda se implementa con una **FK compuesta**, no con trigger. `INDUSTRY` gana `UNIQUE (industry_id, sector_id)` y `COMPANY (industry_id, sector_id)` la referencia con `MATCH SIMPLE`: si falta alguno de los dos no se comprueba nada (conocimiento parcial permitido); si están los dos, tienen que casar. Es la misma regla que el trigger T3, pero declarativa y sin código. `SOURCE_SECTOR_MAP` usa la misma FK compuesta. **T3 desaparece del plan de triggers.**
 
 ---
 
@@ -65,7 +66,7 @@ Un registro `unclassified` en la dimensión canónica contaminaría una tabla de
 
 ## Cambios al núcleo
 
-- `COMPANY`: se **elimina** `sector`/`industry` (texto libre); se añaden `sector_id` FK e `industry_id` FK (ambos nullable) + trigger de consistencia (§4).
+- `COMPANY`: se **elimina** `sector`/`industry` (texto libre); se añaden `sector_id` FK e `industry_id` FK (ambos nullable) + FK compuesta de consistencia (§4).
 - Tablas nuevas de referencia: `SECTOR`, `INDUSTRY`.
 - Tabla nueva de mapeo (normalizador): `SOURCE_SECTOR_MAP`.
 - Recomendado auditar `SECTOR`, `INDUSTRY`, `SOURCE_SECTOR_MAP` con `DIMENSION_AUDIT` (dimensiones mutables de referencia).

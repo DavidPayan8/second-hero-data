@@ -142,7 +142,7 @@ erDiagram
     text identity_source "cik|lei|isolated (CHECK con la evidencia)"
     text country_iso
     bigint sector_id FK "nullable (NULL=no clasificado, fuera del ranking)"
-    bigint industry_id FK "nullable (trigger de consistencia con sector_id)"
+    bigint industry_id FK "nullable (FK compuesta con sector_id)"
     int fiscal_year_end_month
   }
 
@@ -392,7 +392,8 @@ erDiagram
     bigint id PK
     bigint ingestion_run_id FK
     text provider_symbol "TEXT, no FK (desacoplado)"
-    text content_hash FK "-> PAYLOAD_BLOB"
+    text content_hash FK "-> PAYLOAD_BLOB; NULL si no hubo respuesta"
+    text transport_error "NULL si hubo respuesta"
     jsonb metadata "para siempre"
   }
   PAYLOAD_BLOB {

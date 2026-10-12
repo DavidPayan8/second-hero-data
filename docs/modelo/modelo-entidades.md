@@ -29,7 +29,7 @@ erDiagram
     text identity_source "NOT NULL cik|lei|isolated; CHECK cik=>cik, lei=>lei, isolated=>ambos NULL"
     text country_iso
     bigint sector_id FK "-> SECTOR (nullable; NULL=no clasificado, fuera del ranking)"
-    bigint industry_id FK "-> INDUSTRY (nullable; independiente, trigger de consistencia con sector_id)"
+    bigint industry_id FK "-> INDUSTRY (nullable; independiente, FK compuesta (industry_id, sector_id) a INDUSTRY)"
     int fiscal_year_end_month
   }
 

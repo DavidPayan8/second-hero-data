@@ -36,6 +36,31 @@ El código de exchange de EODHD **no es una bolsa**. `US` es un agregado de NYSE
 ### 2.b `SOURCE_VENUE_MAP`
 - PK `(provider, provider_code, provider_venue_label)` → `mic` (FK a `EXCHANGE.mic`).
 - Ej.: `(eodhd, US, 'NASDAQ') → XNAS`, `(eodhd, US, 'NYSE') → XNYS`, `(eodhd, US, 'NYSE ARCA') → ARCX`, `(eodhd, US, 'OTC') → OTCM`.
+- Es dato **curado** (seed), no lo escribe el normalizador. Que solo haya filas para códigos `aggregate` se comprueba con un test sobre el seed, no con el esquema.
+
+### 2.c Granularidad de `EXCHANGE` y mapa de las etiquetas de `US` (P9, 2026-10-12)
+
+**Regla:** una fila de `EXCHANGE` = **una bolsa registrada**, con el MIC de segmento cuando un mismo operador tiene varias (ISO 10383): `ARCX` (NYSE Arca) y `XASE` (NYSE American) son segmentos del operador `XNYS`; `BATS` (Cboe BZX) es segmento del operador `XCBO`. Cada una es una bolsa distinta con su propio registro, así que es un venue distinto.
+
+**Los niveles de OTC no son bolsas.** PINK, OTCQB, OTCQX, Grey, Caveat Emptor… son la clasificación que OTC Markets da a un valor dentro de un mismo mercado, y un valor cambia de nivel a menudo (QX → Pink por incumplir requisitos). ISO 10383 los tiene como segmentos de `OTCM` (`PINX`, `OTCB`, `OTCQ`, `PSGM`, `CAVE`…), pero usarlos como venue convertiría cada cambio de nivel en un falso cambio de bolsa del `LISTING`. Todos se mapean al operador **`OTCM`**.
+
+**Que el `OperatingMIC` de `exchanges-list` para `US` sea `XNAS, XNYS, OTCM, XCBO` no contradice esto:** ese campo lista operadores; nuestro `EXCHANGE` lista bolsas. Para el agregado `US` la resolución usa **solo la etiqueta por símbolo** (§3), nunca el `OperatingMIC` del código.
+
+| Etiqueta (`exchange-symbol-list/US` → `Exchange`) | MIC | Nota |
+|---|---|---|
+| `NASDAQ` | `XNAS` | |
+| `NYSE` | `XNYS` | |
+| `NYSE ARCA` | `ARCX` | |
+| `NYSE MKT`, `AMEX` | `XASE` | mismo mercado, nombre histórico |
+| `BATS` | `BATS` | Cboe BZX (segmento de `XCBO`) |
+| `OTC`, `PINK`, `OTCPK`, `OTCQB`, `OTCQX`, `OTCMKTS`, `OTCGREY`, `OTCCE` | `OTCM` | niveles de OTC Markets |
+| `OTCBB` | — sin fila | el OTC Bulletin Board de FINRA ya no opera; asignarle `OTCM` sería suponer. 5 símbolos → `VENUE_UNMAPPED` |
+| `US` | — sin fila | sub-bolsa no resuelta (556 símbolos) → `exchange_id` NULL + `VENUE_UNMAPPED`. Contrastar con `General.Exchange` de `fundamentals` en la Fase 3 |
+| `NMFQS` | — sin fila | fondos de inversión (25.484). El filtro por tipo va **antes** de resolver el venue, así que no generan `VENUE_UNMAPPED` |
+
+- **Por qué mapear PINK aunque sea mucho ruido:** las empresas en quiebra pasan a Pink con sufijo `Q` (`BBBYQ`, `SHLDQ`). Sin ese mapa, el rastro de deslistadas, que importa para el sesgo de supervivencia, acabaría en `VENUE_UNMAPPED`. Que el screener enseñe o no OTC es un filtro de VISTAS (`mic = 'OTCM'`), derivable; no se decide en la ingesta.
+- **Pérdida conocida:** el nivel de OTC (Pink/QX/QB/Grey/Caveat Emptor) no se guarda en la fuente de verdad, solo en `RAW_PAYLOAD`. Si el producto necesita filtrar por nivel (p. ej. excluir Caveat Emptor y Grey), entra por propuesta y migración nueva.
+- **`EXCHANGE` añade `BATS`** (ya estaba en el seed); los MIC verificados contra ISO 10383 son `ARCX`, `XASE` (segmentos de `XNYS`), `BATS` (segmento de `XCBO`) y `OTCM` (operador).
 
 ---
 
@@ -83,6 +108,6 @@ Decidido al implementar la migración (2026-10-10).
 
 ## Pendiente / verificar en vivo
 
-- Nombre y valores exactos del campo de sub-bolsa por símbolo en `exchange-symbol-list` de EODHD (para poblar `SOURCE_VENUE_MAP`).
-- Seed inicial: lista de códigos de EODHD (`exchanges-list` da code + OperatingMIC) para poblar `SOURCE_EXCHANGE` y las filas `single`.
+- ~~Nombre y valores exactos del campo de sub-bolsa por símbolo~~ ✅ campo `Exchange`, 17 etiquetas; mapa en §2.c.
+- ~~Seed inicial de `SOURCE_EXCHANGE`~~ ✅ desde `exchanges-list` (migración 010): solo códigos cuya bolsa está curada en `EXCHANGE`, más `US` (aggregate) y los virtuales.
 - Horarios de cierre y timezones por MIC (fuente estándar, no EODHD).
