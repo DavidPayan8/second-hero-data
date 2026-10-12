@@ -81,7 +81,7 @@ Reasignar en silencio un `security_id` o un `company_id` por un dato nuevo del p
 ## 7. Instancias que reusan el patrón (ya resueltas en sus chunks)
 
 - **Constituyente de ETF:** ISIN→`security_id` (query a `SECURITY.isin`); fallback `constituent_isin`/`name`. Anclado estable igual. (Chunk ETF.)
-- **Noticias:** ticker→security (query); si el proveedor etiqueta por ticker crudo, resolver antes de insertar en `NEWS_SECURITY`. (Chunk noticias.)
+- **Noticias:** el proveedor etiqueta por símbolo EODHD crudo (verificado); se resuelve símbolo → `LISTING` → `SECURITY` antes de insertar en `NEWS_SECURITY`; lo que no resuelve se ignora sin finding. (`modelo-noticias.md`, P8.)
 - **Holder:** `SOURCE_HOLDER_MAP` (§4).
 
 Todas son el mismo mecanismo: identificador del proveedor → ID estable nuestro, con crosswalk y anclado.

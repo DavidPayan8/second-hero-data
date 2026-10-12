@@ -69,6 +69,6 @@ Consolidado de lo que estaba repetido/disperso en cada chunk:
 - Dirección de escala de `rating_mean` (asumido 1=Strong Buy).
 - Shape del bloque `ETF_Data` (NAV, holdings, allocations).
 - Shape de la sección Earnings (campos, before/after market, estimado por periodo; que `fiscal_period_end` case con el de FUNDAMENTALS).
-- Shape del endpoint/sección de noticias (etiqueta por ISIN/security o por ticker crudo — determina si hace falta resolución en `NEWS_SECURITY`).
+- ~~Shape del endpoint/sección de noticias.~~ ✅ Verificado: etiqueta por símbolo EODHD crudo; se resuelve por el crosswalk de LISTING (ver `modelo-noticias.md`, P8).
 - **Cobertura de deslistadas (survivorship bias):** verificar qué profundidad de empresas que dejaron de cotizar da EODHD. Sin deslistadas, cualquier backtest sale artificialmente bueno. (Modelo ya preparado: `LISTING.status='delisted'` + `LISTING_TICKER_CHANGE`; falta confirmar que el proveedor las sirve.)
 - **Fecha de presentación en fundamentales (look-ahead bias):** confirmar que EODHD incluye la fecha real de publicación, no solo el cierre de periodo. (Modelo ya preparado: `FUNDAMENTALS.reported_at`; es lo que puebla ese campo con `reported_at_source='provider'` en vez del fallback `estimated`.)
