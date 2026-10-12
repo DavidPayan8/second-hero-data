@@ -60,7 +60,7 @@ erDiagram
 |---|---|---|---|
 | **ETF_PROFILE** | SECURITY (1:1) | natural `security_id` | Dimensión — historial vía log de correcciones (pendiente global). |
 | **ETF_SNAPSHOT** | SECURITY | natural `(security_id, as_of_date)`; dedup por valor | Snapshot-temporal (antes `ETF_NAV_DAILY`, ver decisiones §2.b). |
-| **ETF_HOLDING** | SECURITY (+ FK opcional a SECURITY constituyente) | `id` + `UNIQUE (security_id, as_of_date, COALESCE(constituent_symbol, constituent_isin, constituent_name))` | Snapshot-temporal — histórico conservado. |
+| **ETF_HOLDING** | SECURITY (+ FK opcional a SECURITY constituyente) | `id` + `UNIQUE (security_id, as_of_date, COALESCE('sym:'||constituent_symbol, 'isin:'||constituent_isin, 'name:'||constituent_name))` | Snapshot-temporal — histórico conservado. |
 | **ETF_ALLOCATION** | SECURITY | `id` + `UNIQUE (security_id, as_of_date, dimension, bucket)` | Snapshot-temporal — histórico conservado. |
 
 **Clave del constituyente:** solo identificadores del proveedor (`constituent_symbol`, luego `constituent_isin`, luego `constituent_name`), nunca nuestra resolución, para que una resolución que cambie no duplique filas. La resolución estable ISIN→security se difiere al normalizador (ver decisiones §2.c).
