@@ -139,7 +139,7 @@ Total: **36 tablas**.
 
 - **T1** `SECURITY` BEFORE INSERT/UPDATE: `ASSET_TYPE.requires_company = true` ⇒ `company_id` NOT NULL; `false` ⇒ NULL.
 - **T2** `ASSET_TYPE` BEFORE UPDATE: `requires_company` inmutable si el tipo ya tiene securities.
-- **T3** `COMPANY` BEFORE INSERT/UPDATE: si `sector_id` e `industry_id` están puestos, `sector_id` = `INDUSTRY.sector_id`.
+- ~~**T3**~~ Eliminado: la consistencia sector/industria de `COMPANY` es una FK compuesta `(industry_id, sector_id)` → `INDUSTRY` con `MATCH SIMPLE` (migración `010_normalizador`), no un trigger. Los triggers de esta migración son T1, T2 y T4.
 - **T4** Auditoría AFTER INSERT/UPDATE/DELETE en COMPANY, SECURITY, LISTING, EXCHANGE, ASSET_TYPE, ETF_PROFILE, SECTOR, INDUSTRY, VALIDATION_RULE y las cuatro `SOURCE_*`. Una fila por columna que **realmente** cambió (`IS DISTINCT FROM`); `changed_by` y `reason` de `current_setting('app.actor', true)` / `('app.reason', true)`; `change_set_id` uno por transacción (si la app no puso `app.change_set_id`, el trigger lo fija con `set_config(…, true)`).
 - En la app, `withActor(actor, reason, fn)`: abre transacción, hace `SET LOCAL` de las variables y ejecuta `fn`. Toda escritura del normalizador en dimensiones pasa por aquí.
 
@@ -152,7 +152,7 @@ Total: **36 tablas**.
 - A1 Existen exactamente 36 tablas del modelo (sin contar `schema_migrations`).
 - A2 Acción sin company → error. ETF con company → error.
 - A3 Cambiar `requires_company` de un tipo con securities → error.
-- A4 Company con industria de otro sector → error. Solo sector → ok. Ambos NULL → ok.
+- A4 Company con industria de otro sector → error (FK compuesta, ver `010_normalizador`). Solo sector → ok. Solo industria → ok. Ambos NULL → ok.
 - A5 Un UPDATE de `legal_name` y `sector_id` en la misma transacción → 2 filas de `DIMENSION_AUDIT` con el mismo `change_set_id` y `changed_by`/`reason` rellenos. Un UPDATE que no cambia nada → 0 filas.
 - A6 Dos listings primarios para la misma security → error.
 - A7 Restatement: misma `(company, period_end, period_type)` con distinto `reported_at` → ok; con el mismo → error.
@@ -164,8 +164,8 @@ Total: **36 tablas**.
 
 Especificación: `decisiones-modelo-ingesta.md`, `-referencia`, `-identidad`, `-taxonomia`, `-auditoria`.
 
-1. **Ingesta cruda.** `capture` escribe `INGESTION_RUN` → `PAYLOAD_BLOB` (sha256 del cuerpo sin comprimir, cuerpo gzip, dedup por hash) → `RAW_PAYLOAD`. `replay` carga los ficheros de `fixtures/` en las mismas tablas, de modo que todo lo que viene después **solo lee de `RAW_PAYLOAD`**, venga de la API o de fichero. `parse_status`/`parse_error` se actualizan por payload.
-2. **Referencia.** `provider_symbol` → MIC según `SOURCE_EXCHANGE` (`single` / `aggregate` + `SOURCE_VENUE_MAP` / `virtual`). Venue desconocido → sin MIC y finding `VENUE_UNMAPPED`; nunca se inventa un MIC.
+1. **Ingesta cruda.** **Al arrancar una corrida, el orquestador cierra como `failed` cualquier corrida del mismo `scope` que siga en `running`** (el proceso murió; `finished_at` queda informado). Un fallo de transporte (timeout, conexión cortada) también deja una fila en `RAW_PAYLOAD` con `transport_error`, sin `http_status` ni `content_hash`; una respuesta 4xx/5xx sí tiene cuerpo y va a `PAYLOAD_BLOB`. `capture` escribe `INGESTION_RUN` → `PAYLOAD_BLOB` (sha256 del cuerpo sin comprimir, cuerpo gzip, dedup por hash) → `RAW_PAYLOAD`. `replay` carga los ficheros de `fixtures/` en las mismas tablas, de modo que todo lo que viene después **solo lee de `RAW_PAYLOAD`**, venga de la API o de fichero. `parse_status`/`parse_error` se actualizan por payload.
+2. **Referencia.** `provider_symbol` → MIC según `SOURCE_EXCHANGE` (`single` / `aggregate` + `SOURCE_VENUE_MAP` / `virtual`). Venue desconocido → sin MIC y finding `VENUE_UNMAPPED`; nunca se inventa un MIC. **El filtro por tipo (D2, `ASSET_TYPE`) va antes de resolver el venue**: los fondos de inversión de la etiqueta `NMFQS` se descartan por tipo y no generan `VENUE_UNMAPPED`.
 3. **Identidad.** Implementar `resolver()` y `resolver_company()` tal como están en `modelo-entidades-identidad.md`: camino rápido por `provider_symbol`; ISIN → (MIC, ticker) → nuevo; company por CIK → LEI → `isolated` (+ finding `IDENTITY_ISOLATED`). Un identificador que contradice un enlace existente → finding `IDENTITY_RELINK_CONFLICT` y **no se re-enlaza**. Cambio de ticker: actualizar `provider_symbol` + fila en `LISTING_TICKER_CHANGE`, mismo `listing_id`.
 4. **Taxonomía.** Etiquetas del proveedor → `SOURCE_SECTOR_MAP` → `sector_id`/`industry_id`. Sin mapeo → NULL + `SECTOR_UNMAPPED`. Lo mismo para la allocation por sector de los ETF.
 5. **Escritores**, empezando por un corte vertical completo de `AAPL.US` y ampliando después:

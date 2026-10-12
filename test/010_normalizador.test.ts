@@ -62,18 +62,54 @@ test('raw_payload: varias filas por blob, provider_symbol es texto sin FK, param
   expect(fks.rows.map((x) => x.t)).toEqual(['ingestion_run', 'payload_blob']);
 }));
 
-test('raw_payload: obligatorios, FK, parse_status en dominio y parse_error solo con error', () => inRollback(async (c) => {
+test('raw_payload con respuesta: obligatorios, FK, parse_status en dominio y parse_error si y solo si error', () => inRollback(async (c) => {
   const r = await run(c);
   await blob(c);
   expect((await dbError(c, RAW, [999999, 'X.US', {}, 200, HASH]))?.code).toBe('23503');
   expect((await dbError(c, RAW, [r, 'X.US', {}, 200, 'f'.repeat(64)]))?.code).toBe('23503'); // blob inexistente
-  expect((await dbError(c, RAW, [r, 'X.US', {}, null, HASH]))?.code).toBe('23502');
   expect((await dbError(c, "INSERT INTO raw_payload (ingestion_run_id, http_status, content_hash) VALUES ($1,200,$2)", [r, HASH]))?.code).toBe('23502'); // sin endpoint
   expect((await dbError(c, "INSERT INTO raw_payload (ingestion_run_id, endpoint, http_status, content_hash, parse_status) VALUES ($1,'eod',200,$2,'roto')", [r, HASH]))?.code).toBe('23514');
-  expect((await dbError(c, "INSERT INTO raw_payload (ingestion_run_id, endpoint, http_status, content_hash, parse_status, parse_error) VALUES ($1,'eod',200,$2,'ok','x')", [r, HASH]))?.message).toContain('raw_payload_parse_error_only_if_error');
-  await c.query("INSERT INTO raw_payload (ingestion_run_id, endpoint, http_status, content_hash, parse_status, parse_error) VALUES ($1,'eod',403,$2,'error','Only EOD data allowed for free users')", [r, HASH]);
+  // con respuesta, http_status y content_hash son obligatorios
+  expect((await dbError(c, RAW, [r, 'X.US', {}, null, HASH]))?.message).toContain('raw_payload_response_xor_transport_error');
+  expect((await dbError(c, RAW, [r, 'X.US', {}, 200, null]))?.message).toContain('raw_payload_response_xor_transport_error');
+  expect((await dbError(c, "INSERT INTO raw_payload (ingestion_run_id, endpoint, http_status, content_hash, parse_status) VALUES ($1,'eod',200,$2,NULL)", [r, HASH]))?.message).toContain('raw_payload_response_xor_transport_error');
+  // parse_error NOT NULL si y solo si parse_status = 'error'
+  const P = "INSERT INTO raw_payload (ingestion_run_id, endpoint, http_status, content_hash, parse_status, parse_error) VALUES ($1,'eod',200,$2,$3,$4)";
+  expect((await dbError(c, P, [r, HASH, 'ok', 'x']))?.message).toContain('raw_payload_parse_error_iff_error');
+  expect((await dbError(c, P, [r, HASH, 'pending', 'x']))?.message).toContain('raw_payload_parse_error_iff_error');
+  expect((await dbError(c, P, [r, HASH, 'error', null]))?.message).toContain('raw_payload_parse_error_iff_error'); // el otro sentido
+  await c.query(P, [r, HASH, 'error', 'campo inesperado']);
+  await c.query(P, [r, HASH, 'ok', null]);
   expect((await dbError(c, 'DELETE FROM ingestion_run WHERE ingestion_run_id=$1', [r]))?.code).toBe('23503');
   expect((await dbError(c, 'DELETE FROM payload_blob WHERE content_hash=$1', [HASH]))?.code).toBe('23503');
+}));
+
+test('raw_payload: una respuesta 4xx/5xx SÍ es respuesta (cuerpo en payload_blob)', () => inRollback(async (c) => {
+  const r = await run(c);
+  await blob(c);
+  for (const st of [403, 404, 429, 500, 503]) await c.query(RAW, [r, 'fundamentals/AAPL.US', {}, st, HASH]);
+  await c.query("INSERT INTO raw_payload (ingestion_run_id, endpoint, http_status, content_hash, parse_status, parse_error) VALUES ($1,'fundamentals',403,$2,'error','Only EOD data allowed for free users')", [r, HASH]);
+  expect((await c.query('SELECT count(*)::int AS n FROM raw_payload WHERE http_status >= 400')).rows[0].n).toBe(6);
+}));
+
+test('raw_payload sin respuesta (fallo de transporte): transport_error y los otros tres a NULL, todo a la vez', () => inRollback(async (c) => {
+  const r = await run(c);
+  await blob(c);
+  const T = "INSERT INTO raw_payload (ingestion_run_id, endpoint, provider_symbol, http_status, content_hash, parse_status, transport_error) VALUES ($1,'eod','AAPL.US',$2,$3,$4,$5)";
+  await c.query(T, [r, null, null, null, 'ETIMEDOUT: connect timed out after 30000 ms']);
+  const row = (await c.query('SELECT http_status, content_hash, parse_status, parse_error, transport_error FROM raw_payload')).rows[0];
+  expect(row).toEqual({ http_status: null, content_hash: null, parse_status: null, parse_error: null, transport_error: 'ETIMEDOUT: connect timed out after 30000 ms' });
+  // mezclar las dos formas falla, en cualquier combinación
+  expect((await dbError(c, T, [r, 200, null, null, 'ECONNRESET']))?.message).toContain('raw_payload_response_xor_transport_error'); // http_status con transport_error
+  expect((await dbError(c, T, [r, null, HASH, null, 'ECONNRESET']))?.message).toContain('raw_payload_response_xor_transport_error'); // content_hash con transport_error
+  expect((await dbError(c, T, [r, null, null, 'pending', 'ECONNRESET']))?.message).toContain('raw_payload_response_xor_transport_error'); // parse_status con transport_error
+  expect((await dbError(c, T, [r, 200, HASH, 'pending', 'ECONNRESET']))?.message).toContain('raw_payload_response_xor_transport_error'); // respuesta completa con transport_error
+  expect((await dbError(c, T, [r, null, null, null, null]))?.message).toContain('raw_payload_response_xor_transport_error'); // ni respuesta ni error
+  // un fallo de transporte no puede llevar parse_error (parse_status NULL)
+  expect((await dbError(c, "INSERT INTO raw_payload (ingestion_run_id, endpoint, transport_error, parse_error) VALUES ($1,'eod','DNS','x')", [r]))).not.toBeNull();
+  // si se omite parse_status en un fallo de transporte, el DEFAULT 'pending' lo rompe: el escritor lo pone a NULL explícitamente
+  expect((await dbError(c, "INSERT INTO raw_payload (ingestion_run_id, endpoint, transport_error) VALUES ($1,'eod','DNS')", [r]))?.message).toContain('raw_payload_response_xor_transport_error');
+  expect((await c.query('SELECT count(*)::int AS n FROM raw_payload')).rows[0].n).toBe(1);
 }));
 
 test('source_exchange: kind en dominio y default_mic solo en single, con FK a exchange.mic', () => inRollback(async (c) => {
@@ -114,15 +150,28 @@ test('seed SOURCE_EXCHANGE: US agregado, MC -> XMAD, virtuales, y todos los sing
   expect(orphan.rows).toEqual([]);
 });
 
-test('seed SOURCE_VENUE_MAP: seis etiquetas inequívocas; la etiqueta genérica US NO tiene fila', async () => {
+test('seed SOURCE_VENUE_MAP: etiquetas de US a MIC según P9; sin fila OTCBB, US y NMFQS', async () => {
   const { rows } = await pool.query<{ provider_venue_label: string; mic: string }>("SELECT provider_venue_label, mic FROM source_venue_map WHERE provider='eodhd' AND provider_code='US' ORDER BY 1");
-  expect(Object.fromEntries(rows.map((r) => [r.provider_venue_label, r.mic]))).toEqual({
-    AMEX: 'XASE', NASDAQ: 'XNAS', NYSE: 'XNYS', 'NYSE ARCA': 'ARCX', 'NYSE MKT': 'XASE', OTC: 'OTCM',
+  const map = Object.fromEntries(rows.map((r) => [r.provider_venue_label, r.mic]));
+  expect(map).toEqual({
+    NASDAQ: 'XNAS', NYSE: 'XNYS', 'NYSE ARCA': 'ARCX', 'NYSE MKT': 'XASE', AMEX: 'XASE', BATS: 'BATS',
+    OTC: 'OTCM', PINK: 'OTCM', OTCPK: 'OTCM', OTCQB: 'OTCM', OTCQX: 'OTCM', OTCMKTS: 'OTCM', OTCGREY: 'OTCM', OTCCE: 'OTCM',
   });
-  expect(rows.some((r) => r.provider_venue_label === 'US')).toBe(false);
-  for (const dudosa of ['NMFQS', 'BATS', 'PINK', 'OTCQB', 'OTCQX', 'OTCMKTS', 'OTCGREY', 'OTCPK', 'OTCCE', 'OTCBB']) {
-    expect(rows.some((r) => r.provider_venue_label === dudosa), dudosa).toBe(false);
-  }
+  for (const sinFila of ['OTCBB', 'US', 'NMFQS']) expect(map[sinFila], sinFila).toBeUndefined();
+  expect(rows).toHaveLength(14);
+});
+
+test('seed SOURCE_VENUE_MAP: solo hay filas para códigos de kind aggregate', async () => {
+  const { rows } = await pool.query("SELECT v.provider_code, e.kind FROM source_venue_map v JOIN source_exchange e USING (provider, provider_code) WHERE e.kind <> 'aggregate'");
+  expect(rows).toEqual([]);
+  const huerfanas = await pool.query("SELECT 1 FROM source_venue_map v LEFT JOIN source_exchange e USING (provider, provider_code) WHERE e.kind IS NULL");
+  expect(huerfanas.rows).toEqual([]);
+  expect((await pool.query("SELECT count(*)::int AS n FROM source_venue_map")).rows[0].n).toBeGreaterThan(0);
+});
+
+test('todo MIC del mapa de venues existe en EXCHANGE', async () => {
+  const { rows } = await pool.query("SELECT v.mic FROM source_venue_map v LEFT JOIN exchange e ON e.mic = v.mic WHERE e.mic IS NULL");
+  expect(rows).toEqual([]);
 });
 
 test('source_holder_map: el nombre guardado ya está normalizado con holder_name_norm()', () => inRollback(async (c) => {
@@ -150,4 +199,24 @@ test('source_sector_map: la industria destino tiene que pertenecer al sector des
   expect((await dbError(c, M, ['X', 'Y', 999999, null]))?.code).toBe('23503');
   expect((await dbError(c, M, ['X', 'Y', null, null]))?.code).toBe('23502'); // sector_id siempre
   expect((await dbError(c, "INSERT INTO source_sector_map (provider, provider_sector_label, sector_id) VALUES ('eodhd','Solo sector',$1)", [fin]))).toBeNull(); // industria '' por defecto
+}));
+
+test('company: sector e industria que casan pasan, discrepantes fallan; con solo uno puesto no se comprueba nada', () => inRollback(async (c) => {
+  const fin = await id(c, "INSERT INTO sector (code,name) VALUES ('fin_c','Financials') RETURNING sector_id AS id");
+  const tec = await id(c, "INSERT INTO sector (code,name) VALUES ('tec_c','Tecnología') RETURNING sector_id AS id");
+  const bank = await id(c, "INSERT INTO industry (sector_id, code, name) VALUES ($1,'bank_c','Banking') RETURNING industry_id AS id", [fin]);
+  const C = "INSERT INTO company (identity_source, sector_id, industry_id) VALUES ('isolated',$1,$2)";
+  await c.query(C, [fin, bank]); // ambos puestos y coherentes
+  expect((await dbError(c, C, [tec, bank]))?.code).toBe('23503'); // ambos puestos y discrepantes
+  await c.query(C, [fin, null]); // solo sector
+  await c.query(C, [tec, null]);
+  await c.query(C, [null, bank]); // solo industria (conocimiento parcial)
+  await c.query(C, [null, null]); // ninguno
+  // UPDATE: mover una company a un sector que no es el de su industria también falla
+  const co = await id(c, "INSERT INTO company (identity_source, sector_id, industry_id) VALUES ('isolated',$1,$2) RETURNING company_id AS id", [fin, bank]);
+  expect((await dbError(c, 'UPDATE company SET sector_id=$1 WHERE company_id=$2', [tec, co]))?.code).toBe('23503');
+  expect((await dbError(c, 'UPDATE company SET sector_id=NULL WHERE company_id=$1', [co]))).toBeNull(); // quitar el sector: queda solo industria
+  // las FK simples de 002 siguen vigentes
+  expect((await dbError(c, C, [999999, null]))?.code).toBe('23503');
+  expect((await dbError(c, C, [null, 999999]))?.code).toBe('23503');
 }));

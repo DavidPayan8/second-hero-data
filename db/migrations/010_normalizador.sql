@@ -11,7 +11,9 @@
 
 -- Corrida de ingesta: agrupa las llamadas de una jornada de un mercado. El materializador la consulta para saber que
 -- un mercado está completo. scope identifica qué cubre (p. ej. eod:US, fundamentals:XETRA). partial = terminó pero con
--- errores en algunas llamadas. finished_at es NULL solo mientras corre.
+-- errores en algunas llamadas (incluidos los fallos de transporte, que también dejan fila en raw_payload).
+-- finished_at es NULL solo mientras corre. Una corrida cuyo proceso muere se queda en 'running': el orquestador
+-- (Fase 3) la cierra como 'failed' al arrancar la siguiente del mismo scope.
 CREATE TABLE ingestion_run (
   ingestion_run_id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   provider         text        NOT NULL,
@@ -41,23 +43,33 @@ CREATE TABLE payload_blob (
 -- Una fila por llamada a la API. La metadata vive para siempre. provider_symbol es TEXTO, sin FK a LISTING: cuando
 -- llega AAPL.US aún no se sabe qué security_id es (desacople deliberado). NULL en llamadas a nivel de bolsa.
 -- Cada intento deja su fila aunque devuelva lo mismo (son eventos distintos); la idempotencia es la del blob.
--- Toda fila corresponde a una llamada que obtuvo respuesta HTTP con cuerpo (aunque sea un error o []), por eso
--- http_status y content_hash son obligatorios; una llamada sin respuesta solo suma a ingestion_run.error_count.
+-- Dos formas de fila, atadas por un único CHECK:
+--   con respuesta   : http_status, content_hash y parse_status NOT NULL, transport_error NULL. Una respuesta HTTP de
+--                     error (404, 429, 500) SÍ es respuesta: tiene cuerpo, está en payload_blob y lleva su http_status.
+--   sin respuesta   : fallo de transporte (timeout, conexión cortada, DNS). http_status, content_hash y parse_status
+--                     NULL (no hay cuerpo que guardar ni que parsear) y transport_error con el mensaje; el
+--                     orquestador sabe así qué símbolos reintentar.
+-- parse_error NOT NULL si y solo si parse_status = 'error'.
 CREATE TABLE raw_payload (
   raw_payload_id   bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   ingestion_run_id bigint      NOT NULL REFERENCES ingestion_run (ingestion_run_id),
   endpoint         text        NOT NULL,
   provider_symbol  text,
   params           jsonb       NOT NULL DEFAULT '{}'::jsonb,
-  http_status      integer     NOT NULL,
-  content_hash     text        NOT NULL REFERENCES payload_blob (content_hash),
+  http_status      integer,
+  content_hash     text        REFERENCES payload_blob (content_hash),
+  transport_error  text,
   fetched_at       timestamptz NOT NULL DEFAULT now(),
-  parse_status     text        NOT NULL DEFAULT 'pending' CHECK (parse_status IN ('pending', 'ok', 'error')),
+  parse_status     text        DEFAULT 'pending' CHECK (parse_status IN ('pending', 'ok', 'error')),
   parse_error      text,
-  CONSTRAINT raw_payload_parse_error_only_if_error CHECK (parse_error IS NULL OR parse_status = 'error')
+  CONSTRAINT raw_payload_response_xor_transport_error CHECK (
+    (transport_error IS NULL     AND http_status IS NOT NULL AND content_hash IS NOT NULL AND parse_status IS NOT NULL) OR
+    (transport_error IS NOT NULL AND http_status IS NULL     AND content_hash IS NULL     AND parse_status IS NULL)
+  ),
+  CONSTRAINT raw_payload_parse_error_iff_error CHECK (COALESCE(parse_status = 'error', false) = (parse_error IS NOT NULL))
 );
 CREATE INDEX raw_payload_run_idx    ON raw_payload (ingestion_run_id);
-CREATE INDEX raw_payload_hash_idx   ON raw_payload (content_hash);
+CREATE INDEX raw_payload_hash_idx   ON raw_payload (content_hash) WHERE content_hash IS NOT NULL;
 CREATE INDEX raw_payload_lookup_idx ON raw_payload (endpoint, provider_symbol, fetched_at);
 
 -- ---------------------------------------------------------------------------------------------------------------
@@ -114,9 +126,16 @@ CREATE TABLE source_holder_map (
 -- ---------------------------------------------------------------------------------------------------------------
 
 -- Para que la industria destino pertenezca al sector destino de forma declarativa (un CHECK no ve otra tabla), se
--- añade a INDUSTRY una clave única (industry_id, sector_id) y SOURCE_SECTOR_MAP la referencia con una FK compuesta.
+-- añade a INDUSTRY una clave única (industry_id, sector_id) y SOURCE_SECTOR_MAP y COMPANY la referencian con una FK
+-- compuesta.
 -- Con industry_id NULL la FK compuesta no se comprueba (MATCH SIMPLE): "solo sector" sigue siendo válido.
 ALTER TABLE industry ADD CONSTRAINT industry_industry_id_sector_id_key UNIQUE (industry_id, sector_id);
+
+-- La misma FK compuesta en COMPANY: si sector_id e industry_id están los dos, tienen que casar con INDUSTRY (sustituye
+-- al trigger T3). MATCH SIMPLE: si falta alguno de los dos no se comprueba nada, así que "solo sector" y "solo
+-- industria" siguen siendo válidos (conocimiento parcial permitido, deriva bloqueada). Se suma a las FK simples de 002.
+ALTER TABLE company ADD CONSTRAINT company_industry_id_sector_id_fkey
+  FOREIGN KEY (industry_id, sector_id) REFERENCES industry (industry_id, sector_id);
 
 -- Memoria texto del proveedor -> ids canónicos. provider_industry_label = '' si el proveedor no da industria.
 -- sector_id siempre; industry_id solo si la industria es mapeable. Sin mapeo no hay fila: la company queda con ambos
