@@ -176,7 +176,7 @@ Especificación: `decisiones-modelo-ingesta.md`, `-referencia`, `-identidad`, `-
    5. Acciones en circulación, earnings.
    6. FX: `rate_to_base` = valor de 1 unidad en EUR (USD = 1/EURUSD). GBX es fila propia con GBP/100 dentro del tipo.
    7. ETF: perfil, NAV, holdings (constituyente resuelto por ISIN), allocation.
-   8. Ownership, analistas, short interest, insiders, holders (`SOURCE_HOLDER_MAP`). Noticias (fuera de la fuente de verdad).
+   8. Ownership, analistas, short interest, insiders, holders (`SOURCE_HOLDER_MAP`). Noticias (fuera de la fuente de verdad): upsert de `news` por `url`; `news_security` se puebla resolviendo símbolo EODHD -> `LISTING` -> `SECURITY` por el mismo crosswalk que el resto, solo **crece** (nunca se borra) y lo que no resuelve se **ignora sin finding** (`modelo-noticias.md` decisión 7).
 
    Cada escritor es **idempotente**: upsert por clave natural.
 
