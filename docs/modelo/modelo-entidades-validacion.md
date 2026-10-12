@@ -19,17 +19,17 @@ erDiagram
     text rule_code FK "-> VALIDATION_RULE"
     text severity "error|warning|info (copia efectiva al emitir; puede override del default)"
     text target_table "tabla afectada (polimorfico, sin FK)"
-    bigint target_row_id "fila afectada"
+    jsonb target_key "PK de la fila afectada como objeto: {listing_id, date}"
     text status "open | reviewed | accepted | dismissed"
     jsonb detail "contexto: valores, tolerancia, diff 2a fuente..."
     timestamptz detected_at
     bigint detected_by_run FK "-> INGESTION_RUN (nullable: barridos)"
-    timestamptz resolved_at "nullable"
-    text resolved_by "nullable"
+    timestamptz resolved_at "NULL sii status = open"
+    text resolved_by "NULL sii status = open"
   }
 ```
 
-> **Polimórfica a propósito.** `target_table` + `target_row_id` apuntan a cualquier fila de cualquier tabla, sin FK. Segunda excepción consciente al anti-patrón polimórfico (como `DIMENSION_AUDIT`): infra transversal, sin referencias entrantes, heterogénea por diseño.
+> **Polimórfica a propósito.** `target_table` + `target_key` apuntan a cualquier fila de cualquier tabla, sin FK. Segunda excepción consciente al anti-patrón polimórfico (como `DIMENSION_AUDIT`): infra transversal, sin referencias entrantes, heterogénea por diseño.
 
 ## Tablas nuevas
 
@@ -62,7 +62,10 @@ erDiagram
 
 ## Convenciones de `target`
 
-- Un finding sobre un dato **ausente o viejo** (`STALENESS`) no tiene fila natural: apunta con `target_table='security'`, `target_row_id=security_id` (o la clave de la última entidad evaluada). Convención, no estructura nueva.
+- `target_key` es la PK de la fila afectada como objeto JSON, construida en SQL desde la propia fila (`jsonb_build_object('listing_id', p.listing_id, 'date', p.date)`), nunca escrita a mano en TypeScript: así el formato de fechas y números es siempre el de Postgres.
+- Un finding sobre un dato **ausente o viejo** (`STALENESS`) no tiene fila natural: apunta con `target_table='security'`, `target_key={"security_id": n}`. Convención, no estructura nueva.
+- Un finding sobre una fila **que no se llegó a crear** (`DIVIDEND_SAME_EX_DATE`) apunta al crudo que la trajo: `target_table='raw_payload'`, `target_key={"raw_payload_id": n}`.
+- Unicidad, estados y re-emisión: `decisiones-modelo-validacion.md` §6.
 
 ## Pendiente / verificar
 

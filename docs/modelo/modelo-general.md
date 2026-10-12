@@ -429,7 +429,7 @@ erDiagram
     bigint id PK
     uuid change_set_id
     text table_name "polimorfico, sin FK"
-    bigint row_id
+    jsonb row_key "PK de la fila como objeto"
     text column_name
     text old_value
     text new_value
@@ -449,7 +449,7 @@ erDiagram
     text rule_code FK
     text severity
     text target_table "polimorfico, sin FK"
-    bigint target_row_id
+    jsonb target_key "PK de la fila como objeto"
     text status "open|reviewed|accepted|dismissed"
     jsonb detail
     timestamptz detected_at

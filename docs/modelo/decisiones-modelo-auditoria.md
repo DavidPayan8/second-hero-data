@@ -26,7 +26,7 @@ Clientes concretos ya existentes: fusiones de companies `isolated` (chunk identi
 
 ## 2. Excepción consciente al anti-patrón polimórfico
 
-`DIMENSION_AUDIT` es una tabla polimórfica (`table_name` + `row_id` + `column_name` como texto), justo el anti-patrón que evitamos en todo el modelo (CORPORATE_ACTION, tabla única de venues, etc.).
+`DIMENSION_AUDIT` es una tabla polimórfica (`table_name` + `row_key` + `column_name`), justo el anti-patrón que evitamos en todo el modelo (CORPORATE_ACTION, tabla única de venues, etc.).
 
 **Aquí se acepta como excepción consciente**, porque:
 - Es **infraestructura transversal**, no dato de dominio.
@@ -41,8 +41,10 @@ No es lo mismo que una tabla de dominio polimórfica. La distinción es: dominio
 
 Grano: **una fila por columna cambiada**. Un `UPDATE` que toca 3 columnas = 3 filas, agrupadas por `change_set_id` (mismo cambio lógico).
 
-`DIMENSION_AUDIT(id, change_set_id, table_name, row_id, column_name, old_value, new_value, op, changed_at, changed_by, reason)`
-- `table_name` + `row_id` (bigint, todas las dimensiones tienen PK bigint) + `column_name` → qué cambió.
+`DIMENSION_AUDIT(id, change_set_id, table_name, row_key, column_name, old_value, new_value, op, changed_at, changed_by, reason)`
+- `table_name` + `row_key` + `column_name` → qué cambió.
+- **`row_key jsonb NOT NULL`: la PK de la fila auditada como objeto JSON** `{columna_pk: valor}`, p. ej. `{"company_id": 42}` o `{"provider": "eodhd", "provider_code": "US"}`. CHECK `jsonb_typeof(row_key) = 'object'`. El trigger la construye leyendo la PK del catálogo (`pg_index`), así que sirve igual para cualquier tabla sin configuración por tabla. Índice `(table_name, row_key)`.
+  - **Actualización (P10, 2026-10-12, migración 013):** la primera versión decía "`row_id bigint`, todas las dimensiones tienen PK bigint". Era falso: `VALIDATION_RULE` (PK `rule_code`) y las cuatro `SOURCE_*` (PK compuesta de texto) no caben, y por eso la 012 no las auditaba. Descartado: `row_id text` con las PK compuestas unidas por un separador (las etiquetas del proveedor son texto libre y el separador puede aparecer dentro); `row_id bigint` + `row_key text` aparte (dos formas de consultar lo mismo); un `id` sintético en cinco tablas solo para el log (cambia tablas para servir a la infraestructura); no auditar las `SOURCE_*` (corregir un mapeo de MIC o de sector es justo lo que hay que poder rastrear). `DATA_QUALITY_FINDING` tiene el mismo problema y la misma solución (`decisiones-modelo-validacion.md` §6).
 - `old_value` / `new_value` como texto (heterogéneo por diseño).
 - `op`: `insert` | `update` | `delete` | `merge`.
 - `change_set_id`: agrupa las columnas cambiadas en una misma operación.
@@ -56,13 +58,14 @@ Poblada por **trigger** `AFTER INSERT/UPDATE/DELETE` en las tablas auditadas (ca
 
 - `changed_by`/`reason` los aporta la aplicación vía variables de sesión (`SET LOCAL app.actor`, `app.reason`) que el trigger lee; NULL cuando no se proporcionan (p. ej. una corrección directa en SQL).
 - El trigger escribe una fila por columna que realmente cambió (compara OLD vs NEW).
+- **`change_set_id`** (P10.c, aprobado): `uuid`, uno por transacción, generado por el trigger salvo que la aplicación fije `app.change_set_id`.
+- **`op = 'merge'`** (P10.b): lo marca la aplicación con `SET LOCAL app.op = 'merge'`. El trigger lo aplica **solo a las filas de `UPDATE`**; las de `INSERT` y `DELETE` conservan su `op`. Con `app.op = 'merge'`, `app.reason` es obligatorio (el trigger lanza error si falta: una fusión sin motivo no se puede revisar). Cualquier otro valor de `app.op` es un error.
 
 ---
 
 ## 5. Qué se audita
 
-- **Sí (v1):** `COMPANY`, `SECURITY`, `LISTING`, `EXCHANGE`, `ASSET_TYPE`, **`ETF_PROFILE`** (es una dimensión mutable y su historial de `expense_ratio` depende de este log; faltaba en la primera versión de esta lista), `SECTOR`, `INDUSTRY`, `VALIDATION_RULE`.
-- **Recomendado:** las tablas de referencia `SOURCE_EXCHANGE`, `SOURCE_VENUE_MAP`, `SOURCE_HOLDER_MAP` — también son dimensiones mutables, y corregir un mapeo MIC es justo lo que querrás auditar.
+- **Sí (v1):** `COMPANY`, `SECURITY`, `LISTING`, `EXCHANGE`, `ASSET_TYPE`, **`ETF_PROFILE`** (es una dimensión mutable y su historial de `expense_ratio` depende de este log; faltaba en la primera versión de esta lista), `SECTOR`, `INDUSTRY`, `VALIDATION_RULE`, y las cuatro tablas de mapeo **`SOURCE_EXCHANGE`, `SOURCE_VENUE_MAP`, `SOURCE_HOLDER_MAP`, `SOURCE_SECTOR_MAP`** (antes "recomendadas"; con `row_key` ya caben, y corregir un mapeo es justo lo que querrás auditar). 13 tablas.
 - **No:** las tablas de hechos (bitemporales / snapshot-temporal / append-only) — ya conservan su historial por diseño. Auditarlas sería redundante.
 
 ---
@@ -83,5 +86,5 @@ Ninguno estructural en las dimensiones (el audit es externo). Solo se añaden lo
 
 ## Pendiente
 
-- Definir el dominio exacto de `op` y si `merge` merece su propia tabla de eventos de fusión (probablemente no en v1).
+- ~~Dominio exacto de `op`~~ ✅ `insert|update|delete|merge`; `merge` vía `app.op` (§4). Una tabla de eventos de fusión propia no entra en v1.
 - Política de retención del propio audit-log (¿para siempre? probablemente sí: es barato y es el registro de integridad).

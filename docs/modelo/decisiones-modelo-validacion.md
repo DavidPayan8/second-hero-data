@@ -14,7 +14,7 @@ El proveedor se equivoca: balances que no cuadran, saltos imposibles, divisas in
 
 ## 1. Sumidero único: `DATA_QUALITY_FINDING` (2ª excepción polimórfica)
 
-Una única tabla para **todo** lo que requiere revisión humana. Polimórfica (`target_table` + `target_row_id`), aceptada como **segunda excepción consciente** por las mismas razones que `DIMENSION_AUDIT`: infraestructura transversal, sin FK entrantes, heterogénea por diseño.
+Una única tabla para **todo** lo que requiere revisión humana. Polimórfica (`target_table` + `target_key`), aceptada como **segunda excepción consciente** por las mismas razones que `DIMENSION_AUDIT`: infraestructura transversal, sin FK entrantes, heterogénea por diseño.
 
 **Por qué única y no cinco tablas:** un operador/panel de administración necesita **una** pantalla/API para "todo lo que requiere intervención", no consultar cinco tablas. Decisión operativa correcta.
 
@@ -57,6 +57,24 @@ Cierra el enum `reported_at_source` previsto en el núcleo:
 ## 5. Frescura (no es un finding almacenado)
 
 La antigüedad del último dato ("datos a 30/06/2026") es un **derivado de VISTAS** (`max(reported_at)`, `max(PRICES_DAILY.date)`), no una fila almacenada. Solo si el dato supera un **umbral de antigüedad** configurable se emite un finding `STALENESS`.
+
+---
+
+## 6. Objetivo, unicidad y ciclo de vida del finding (P10/P11, 2026-10-12, migración 013)
+
+**Objetivo: `target_key jsonb NOT NULL`** en lugar de `target_row_id bigint`. La PK de la fila afectada como objeto JSON (`{"listing_id": 7, "date": "2026-10-09"}`), CHECK `jsonb_typeof = 'object'`. Mismo cambio y mismos motivos que `DIMENSION_AUDIT.row_key` (`decisiones-modelo-auditoria.md` §3): con `bigint` no cabían las filas de PK compuesta (`prices_daily`, `fx_rates`, `earnings`, `ownership_snapshot`, `analyst_consensus`, `short_interest`, `etf_snapshot`), y `YOY_JUMP` o `CURRENCY_COHERENCE` apuntan justo ahí. Convenciones en `modelo-entidades-validacion.md`.
+
+**Un solo finding abierto por regla y objetivo.** Índice único parcial `(rule_code, target_table, target_key) WHERE status = 'open'`. El productor inserta con `ON CONFLICT … DO UPDATE SET detail = EXCLUDED.detail`: si ya hay uno abierto, se actualiza su `detail` al estado actual en vez de duplicarlo. `detected_at` conserva la primera detección.
+- **Excepción `CORPORATE_EVENT_CHANGED`:** al actualizar, conserva el `old` del finding abierto y pone el `new` actual. Un dividendo corregido dos veces antes de revisarse muestra "original → actual". El valor intermedio se pierde; se acepta.
+
+**Estados.** `open` es el único pendiente y el único que bloquea (cortafuegos de VISTAS: `severity = 'error' AND status = 'open'`). Los otros tres cierran el finding:
+- `reviewed`: visto, no hace falta acción (lo normal para `info` y muchos `warning`).
+- `accepted`: el dato es correcto pese a la regla (falso positivo o caso legítimo); el dato pasa.
+- `dismissed`: ya no aplica (el dato se corrigió o la regla estaba mal).
+
+CHECK: `(status = 'open') = (resolved_at IS NULL)` y `(status = 'open') = (resolved_by IS NULL)`. Un finding cerrado **no se reabre**: si el problema vuelve, es un finding nuevo y el cerrado queda como historia.
+
+**No re-emitir lo ya cerrado.** Sin esto, aceptar un `error` duraría hasta el siguiente pase del runner, que lo volvería a abrir. Regla del runner: **no emite** si ya existe un finding cerrado con la misma `(rule_code, target_table, target_key)` y el **mismo `detail`**. Si los datos cambian, el `detail` cambia y sí se emite. Por eso el `detail` de cada regla tiene que ser **determinista sobre los datos**: los valores evaluados, nunca la fecha del pase ni contadores que crecen solos (en `STALENESS`, la última fecha disponible, no "días de retraso"). No va en el esquema (un `detail` grande no cabe en un índice único); se prueba con tests del runner.
 
 ---
 

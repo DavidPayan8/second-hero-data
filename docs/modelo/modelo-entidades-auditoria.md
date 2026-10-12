@@ -7,19 +7,19 @@ erDiagram
   DIMENSION_AUDIT {
     bigint id PK
     uuid change_set_id "agrupa las columnas de un mismo cambio logico"
-    text table_name "company|security|listing|exchange|asset_type|source_*"
-    bigint row_id "PK de la fila auditada (todas las dimensiones son bigint)"
+    text table_name "las 13 tablas auditadas (decisiones §5)"
+    jsonb row_key "PK de la fila auditada como objeto: {company_id: 42}, {provider, provider_code}"
     text column_name "columna cambiada (una fila por columna)"
     text old_value "valor anterior (texto, heterogeneo por diseno)"
     text new_value "valor nuevo (texto)"
-    text op "insert|update|delete|merge"
+    text op "insert|update|delete|merge (merge via SET LOCAL app.op, solo en UPDATE)"
     timestamptz changed_at "default now()"
     text changed_by "actor via SET LOCAL app.actor; NULL si no se aporta"
     text reason "motivo via SET LOCAL app.reason; NULL si no se aporta"
   }
 ```
 
-> **Polimórfica a propósito.** `table_name` + `row_id` + `column_name` identifican la celda cambiada en cualquier dimensión. No hay FK (ni entrantes ni salientes): es el anti-patrón polimórfico aceptado como **excepción consciente** por ser infraestructura sin referencias (ver decisiones §2). Ninguna otra tabla cuelga de ella.
+> **Polimórfica a propósito.** `table_name` + `row_key` + `column_name` identifican la celda cambiada en cualquier dimensión. No hay FK (ni entrantes ni salientes): es el anti-patrón polimórfico aceptado como **excepción consciente** por ser infraestructura sin referencias (ver decisiones §2). Ninguna otra tabla cuelga de ella.
 
 ## Relación con el resto del modelo (conceptual, no FK)
 
@@ -30,12 +30,17 @@ erDiagram
   LISTING ||..o{ DIMENSION_AUDIT : "auditada por trigger"
   EXCHANGE ||..o{ DIMENSION_AUDIT : "auditada por trigger"
   ASSET_TYPE ||..o{ DIMENSION_AUDIT : "auditada por trigger"
-  SOURCE_EXCHANGE ||..o{ DIMENSION_AUDIT : "recomendado"
-  SOURCE_VENUE_MAP ||..o{ DIMENSION_AUDIT : "recomendado"
-  SOURCE_HOLDER_MAP ||..o{ DIMENSION_AUDIT : "recomendado"
+  ETF_PROFILE ||..o{ DIMENSION_AUDIT : "auditada por trigger"
+  SECTOR ||..o{ DIMENSION_AUDIT : "auditada por trigger"
+  INDUSTRY ||..o{ DIMENSION_AUDIT : "auditada por trigger"
+  VALIDATION_RULE ||..o{ DIMENSION_AUDIT : "auditada por trigger"
+  SOURCE_EXCHANGE ||..o{ DIMENSION_AUDIT : "auditada por trigger"
+  SOURCE_VENUE_MAP ||..o{ DIMENSION_AUDIT : "auditada por trigger"
+  SOURCE_HOLDER_MAP ||..o{ DIMENSION_AUDIT : "auditada por trigger"
+  SOURCE_SECTOR_MAP ||..o{ DIMENSION_AUDIT : "auditada por trigger"
 ```
 
-Líneas punteadas = relación **lógica por trigger**, no FK real (`table_name`+`row_id` son texto/bigint sueltos). Las tablas de **hechos** NO aparecen: conservan su propio historial (bitemporal / snapshot-temporal / append-only).
+Líneas punteadas = relación **lógica por trigger**, no FK real (`table_name` + `row_key` son texto/jsonb sueltos). Las tablas de **hechos** NO aparecen: conservan su propio historial (bitemporal / snapshot-temporal / append-only).
 
 ## Grano y mecanismo (resumen)
 
