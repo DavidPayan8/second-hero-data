@@ -170,7 +170,7 @@ Estructura: entidad de referencia global, PK `(currency, date)`, `rate_to_base`.
 
 ### 6.a Precio en subunidad y dividendo en unidad (P2, 2026-10-12)
 
-Verificado en vivo: `eod/SHEL.LSE` cierra en ~3793,5 (peniques, GBX) y `div/SHEL.LSE` trae `currency: "GBP"`. **Se guarda cada cosa tal como llega; nadie divide entre 100 en la ingesta.** Es la opción (b) de P2, y ya era lo que pedían este §6 y la regla de reconciliación del §3:
+Verificado en vivo: `eod/SHEL.LSE` cierra en ~3793,5 (peniques, GBX) y `div/SHEL.LSE` trae `currency: "GBP"`. **Se guarda cada cosa tal como llega; nadie divide entre 100 en la ingesta.** Es la opción (b) de P2, y ya era lo que pedían este §6 y la regla de reconciliación de divisa del §2:
 
 - **`PRICES_DAILY`** en la unidad del proveedor, sin tocar. Su divisa es `LISTING.quote_currency`.
 - **`LISTING.quote_currency`** sale del campo de divisa **por símbolo** de `exchange-symbol-list` (`Currency`), nunca de `EXCHANGE.default_currency` (identidad §8). Para Londres tiene que decir `GBX` en los valores que cotizan en peniques. **Pendiente de comprobar con el payload** de `exchange-symbol-list/LSE` antes de escribir el normalizador de listings: si allí dijera `GBP` mientras `eod` llega en peniques, el campo no serviría y P2 se reabre (no se adivina por la magnitud del precio).
