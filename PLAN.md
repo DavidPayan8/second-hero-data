@@ -115,10 +115,11 @@ Especificación: `docs/modelo/modelo-general.md` y cada par de chunk. Migracione
 | `005_ownership` | HOLDER_POSITION, INSIDER_TRANSACTION, OWNERSHIP_SNAPSHOT, ANALYST_CONSENSUS, SHORT_INTEREST | ownership |
 | `006_holder_name_norm` | (cambio sobre `holder_name_norm()`: colapsa espacios internos; `REINDEX` del índice de `holder_position`) | `decisiones-modelo-ownership.md` §2.b |
 | `007_etf` | ETF_PROFILE, ETF_SNAPSHOT, ETF_HOLDING, ETF_ALLOCATION | etf |
-| `008_noticias` | NEWS, NEWS_SECURITY | noticias |
-| `009_normalizador` | INGESTION_RUN, PAYLOAD_BLOB, RAW_PAYLOAD, SOURCE_EXCHANGE, SOURCE_VENUE_MAP, SOURCE_HOLDER_MAP, SOURCE_SECTOR_MAP | ingesta, referencia, identidad, taxonomía |
-| `010_transversal` | DIMENSION_AUDIT, VALIDATION_RULE, DATA_QUALITY_FINDING | auditoría, validación |
-| `011_triggers` | ver abajo | etf, taxonomía, auditoría |
+| `008_etf_holding_clave` | (cambio sobre ETF_HOLDING: prefijos `sym:`, `isin:` y `name:` en el índice único) | `decisiones-modelo-etf.md` §2.c |
+| `009_noticias` | NEWS, NEWS_SECURITY | noticias |
+| `010_normalizador` | INGESTION_RUN, PAYLOAD_BLOB, RAW_PAYLOAD, SOURCE_EXCHANGE, SOURCE_VENUE_MAP, SOURCE_HOLDER_MAP, SOURCE_SECTOR_MAP | ingesta, referencia, identidad, taxonomía |
+| `011_transversal` | DIMENSION_AUDIT, VALIDATION_RULE, DATA_QUALITY_FINDING | auditoría, validación |
+| `012_triggers` | ver abajo | etf, taxonomía, auditoría |
 
 Total: **36 tablas**.
 
@@ -134,7 +135,7 @@ Total: **36 tablas**.
 - `RAW_PAYLOAD.provider_symbol` es TEXT **sin FK** (desacople deliberado). `content_hash` FK a `PAYLOAD_BLOB`.
 - `DIMENSION_AUDIT` y `DATA_QUALITY_FINDING`: `target_table`/`row_id` **sin FK** (polimórficas a propósito).
 
-### Triggers (`011_triggers`)
+### Triggers (`012_triggers`)
 
 - **T1** `SECURITY` BEFORE INSERT/UPDATE: `ASSET_TYPE.requires_company = true` ⇒ `company_id` NOT NULL; `false` ⇒ NULL.
 - **T2** `ASSET_TYPE` BEFORE UPDATE: `requires_company` inmutable si el tipo ya tiene securities.
