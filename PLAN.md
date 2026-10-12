@@ -114,7 +114,7 @@ Especificación: `docs/modelo/modelo-general.md` y cada par de chunk. Migracione
 | `004_dividend_clave` | (cambio sobre DIVIDEND: clave `UNIQUE (security_id, ex_date)`) | `decisiones-modelo.md` §5.5 |
 | `005_ownership` | HOLDER_POSITION, INSIDER_TRANSACTION, OWNERSHIP_SNAPSHOT, ANALYST_CONSENSUS, SHORT_INTEREST | ownership |
 | `006_holder_name_norm` | (cambio sobre `holder_name_norm()`: colapsa espacios internos; `REINDEX` del índice de `holder_position`) | `decisiones-modelo-ownership.md` §2.b |
-| `007_etf` | ETF_PROFILE, ETF_NAV_DAILY, ETF_HOLDING, ETF_ALLOCATION | etf |
+| `007_etf` | ETF_PROFILE, ETF_SNAPSHOT, ETF_HOLDING, ETF_ALLOCATION | etf |
 | `008_noticias` | NEWS, NEWS_SECURITY | noticias |
 | `009_normalizador` | INGESTION_RUN, PAYLOAD_BLOB, RAW_PAYLOAD, SOURCE_EXCHANGE, SOURCE_VENUE_MAP, SOURCE_HOLDER_MAP, SOURCE_SECTOR_MAP | ingesta, referencia, identidad, taxonomía |
 | `010_transversal` | DIMENSION_AUDIT, VALIDATION_RULE, DATA_QUALITY_FINDING | auditoría, validación |
