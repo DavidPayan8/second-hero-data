@@ -77,7 +77,7 @@ test('audit de una PK compuesta de texto (source_venue_map)', () => inRollback(a
 test('audit de una PK de texto (validation_rule): apagar una regla queda registrado', () => inRollback(async (c) => {
   await c.query("SELECT set_config('app.actor', 'david', true), set_config('app.reason', 'regla ruidosa', true)");
   await c.query("UPDATE validation_rule SET enabled=false, default_severity='info' WHERE rule_code='YOY_JUMP'");
-  const { rows } = await c.query("SELECT column_name, old_value, new_value, op, changed_by, reason FROM dimension_audit WHERE table_name='validation_rule' AND row_key = '{\"rule_code\": \"YOY_JUMP\"}'::jsonb AND op = 'update' ORDER BY column_name");
+  const { rows } = await c.query("SELECT column_name, old_value, new_value, op, changed_by, reason FROM dimension_audit WHERE table_name='validation_rule' AND row_key = '{\"rule_code\": \"YOY_JUMP\"}'::jsonb AND op = 'update' AND change_set_id = current_setting('app.change_set_id')::uuid ORDER BY column_name"); // solo esta transacción: otros tests dejan filas confirmadas sobre la misma regla
   expect(rows.map((r) => [r.column_name, r.old_value, r.new_value])).toEqual([['default_severity', 'warning', 'info'], ['enabled', 'true', 'false']]);
   expect(rows.every((r) => r.op === 'update' && r.changed_by === 'david' && r.reason === 'regla ruidosa')).toBe(true);
 }));

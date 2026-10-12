@@ -12,7 +12,9 @@
     "db:migrate": "tsx src/db/migrate-cli.ts",
     "db:reset": "docker compose down -v && docker compose up -d --wait && tsx src/db/migrate-cli.ts && tsx src/db/seed-cli.ts",
     "test": "vitest run",
-    "db:seed": "tsx src/db/seed-cli.ts"
+    "db:seed": "tsx src/db/seed-cli.ts",
+    "replay": "tsx src/cli.ts replay",
+    "quota": "tsx src/eodhd/user.ts"
   },
   "dependencies": {
     "dotenv": "^18.0.7",
