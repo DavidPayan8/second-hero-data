@@ -12,8 +12,12 @@ const id = async (c: pg.PoolClient, sql: string, params: unknown[] = []) => (awa
 const company = (c: pg.PoolClient, name = 'Acme') => id(c, "INSERT INTO company (legal_name, identity_source) VALUES ($1,'isolated') RETURNING company_id AS id", [name]);
 const typeId = (c: pg.PoolClient, code: string) => id(c, 'SELECT asset_type_id AS id FROM asset_type WHERE code=$1', [code]);
 const SEC = 'INSERT INTO security (company_id, asset_type_id) VALUES ($1,$2) RETURNING security_id AS id';
+const PK: Record<string, string> = {
+  company: 'company_id', security: 'security_id', listing: 'listing_id', exchange: 'exchange_id',
+  asset_type: 'asset_type_id', etf_profile: 'security_id', sector: 'sector_id', industry: 'industry_id',
+};
 const audit = async (c: pg.PoolClient, table: string, rowId: string) =>
-  (await c.query('SELECT column_name, old_value, new_value, op, change_set_id, changed_by, reason FROM dimension_audit WHERE table_name=$1 AND row_id=$2 ORDER BY dimension_audit_id', [table, rowId])).rows;
+  (await c.query('SELECT column_name, old_value, new_value, op, change_set_id, changed_by, reason FROM dimension_audit WHERE table_name=$1 AND row_key = jsonb_build_object($2::text, $3::bigint) ORDER BY dimension_audit_id', [table, PK[table], rowId])).rows;
 
 // ---------------------------------------------------------------- T1
 test('A2: acción sin company -> error; ETF con company -> error; los casos válidos pasan', () => inRollback(async (c) => {
@@ -79,7 +83,7 @@ test('A5: un UPDATE de legal_name y sector_id en una transacción -> 2 filas con
   const tec = await id(c, "INSERT INTO sector (code, name) VALUES ('t4_tec','Tecnología') RETURNING sector_id AS id");
   const co = await company(c, 'Nombre antiguo');
   await c.query("SELECT set_config('app.actor', $1, true), set_config('app.reason', $2, true)", ['david', 'reclasificación manual']);
-  await c.query("DELETE FROM dimension_audit WHERE table_name='company' AND row_id=$1", [co]); // ignora las filas del insert
+  await c.query("DELETE FROM dimension_audit WHERE table_name='company' AND row_key = jsonb_build_object('company_id', $1::bigint)", [co]); // ignora las filas del insert
   await c.query("UPDATE company SET legal_name='Nombre nuevo', sector_id=$1 WHERE company_id=$2", [tec, co]);
   const rows = await audit(c, 'company', co);
   expect(rows).toHaveLength(2);
@@ -93,7 +97,7 @@ test('A5: un UPDATE de legal_name y sector_id en una transacción -> 2 filas con
 
 test('A5: un UPDATE que no cambia nada -> 0 filas; solo se registran las columnas que cambian', () => inRollback(async (c) => {
   const co = await company(c, 'Acme');
-  await c.query("DELETE FROM dimension_audit WHERE table_name='company' AND row_id=$1", [co]);
+  await c.query("DELETE FROM dimension_audit WHERE table_name='company' AND row_key = jsonb_build_object('company_id', $1::bigint)", [co]);
   await c.query("UPDATE company SET legal_name='Acme' WHERE company_id=$1", [co]); // mismo valor
   await c.query('UPDATE company SET sector_id=NULL WHERE company_id=$1', [co]); // NULL -> NULL
   await c.query("UPDATE company SET country_iso='US', fiscal_year_end_month=9 WHERE company_id=$1", [co]);
@@ -136,7 +140,7 @@ test('T4: INSERT registra una fila por columna con valor (old NULL) y DELETE una
   const ins = await audit(c, 'company', co);
   expect(ins.every((r) => r.op === 'insert' && r.old_value === null)).toBe(true);
   expect(ins.map((r) => r.column_name).sort()).toEqual(['company_id', 'country_iso', 'identity_source', 'legal_name']); // las NULL no generan fila
-  await c.query("DELETE FROM dimension_audit WHERE table_name='company' AND row_id=$1", [co]);
+  await c.query("DELETE FROM dimension_audit WHERE table_name='company' AND row_key = jsonb_build_object('company_id', $1::bigint)", [co]);
   await c.query('DELETE FROM company WHERE company_id=$1', [co]);
   const del = await audit(c, 'company', co);
   expect(del.every((r) => r.op === 'delete' && r.new_value === null)).toBe(true);
@@ -191,17 +195,17 @@ test('T4 con withActor: el actor y el motivo llegan al log y no se filtran a la 
   let sectorId = '';
   try {
     sectorId = await withActor('David', 'alta de prueba', async (c) => id(c, 'INSERT INTO sector (code, name) VALUES ($1,$2) RETURNING sector_id AS id', [code, 'Prueba']));
-    const rows = (await pool.query('SELECT changed_by, reason FROM dimension_audit WHERE table_name=$1 AND row_id=$2', ['sector', sectorId])).rows;
+    const rows = (await pool.query('SELECT changed_by, reason FROM dimension_audit WHERE table_name=$1 AND row_key = jsonb_build_object($3::text, $2::bigint)', ['sector', sectorId, 'sector_id'])).rows;
     expect(rows.length).toBeGreaterThan(0);
     expect(rows.every((r) => r.changed_by === 'David' && r.reason === 'alta de prueba')).toBe(true);
     // una corrección directa posterior en SQL no hereda el contexto
     await pool.query("UPDATE sector SET name='Directo' WHERE sector_id=$1", [sectorId]);
-    const directo = (await pool.query("SELECT changed_by, reason FROM dimension_audit WHERE table_name='sector' AND row_id=$1 AND column_name='name' AND new_value='Directo'", [sectorId])).rows;
+    const directo = (await pool.query("SELECT changed_by, reason FROM dimension_audit WHERE table_name='sector' AND row_key = jsonb_build_object('sector_id', $1::bigint) AND column_name='name' AND new_value='Directo'", [sectorId])).rows;
     expect(directo).toEqual([{ changed_by: null, reason: null }]);
   } finally {
     if (sectorId) {
       await pool.query('DELETE FROM sector WHERE sector_id=$1', [sectorId]);
-      await pool.query("DELETE FROM dimension_audit WHERE table_name='sector' AND row_id=$1", [sectorId]);
+      await pool.query("DELETE FROM dimension_audit WHERE table_name='sector' AND row_key = jsonb_build_object('sector_id', $1::bigint)", [sectorId]);
     }
   }
 });

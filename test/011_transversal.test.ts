@@ -31,18 +31,18 @@ test('A1: existen exactamente las 36 tablas del modelo (sin contar schema_migrat
   expect(rows.map((r) => r.table_name)).toEqual(modelo);
 });
 
-const AUD = "INSERT INTO dimension_audit (change_set_id, table_name, row_id, column_name, old_value, new_value, op) VALUES (gen_random_uuid(),'company',1,'legal_name',$1,$2,$3)";
+const AUD = "INSERT INTO dimension_audit (change_set_id, table_name, row_key, column_name, old_value, new_value, op) VALUES (gen_random_uuid(),'company','{\"company_id\": 1}','legal_name',$1,$2,$3)";
 
 test('dimension_audit: op en dominio, obligatorios, valores texto, sin FK', () => inRollback(async (c) => {
   for (const op of ['insert', 'update', 'delete', 'merge']) await c.query(AUD, [null, 'x', op]);
   expect((await dbError(c, AUD, ['a', 'b', 'upsert']))?.code).toBe('23514');
-  expect((await dbError(c, "INSERT INTO dimension_audit (table_name, row_id, column_name, op) VALUES ('company',1,'x','update')"))?.code).toBe('23502'); // sin change_set_id
-  expect((await dbError(c, "INSERT INTO dimension_audit (change_set_id, row_id, column_name, op) VALUES (gen_random_uuid(),1,'x','update')"))?.code).toBe('23502');
+  expect((await dbError(c, "INSERT INTO dimension_audit (table_name, row_key, column_name, op) VALUES ('company','{\"company_id\": 1}','x','update')"))?.code).toBe('23502'); // sin change_set_id
+  expect((await dbError(c, "INSERT INTO dimension_audit (change_set_id, row_key, column_name, op) VALUES (gen_random_uuid(),'{\"company_id\": 1}','x','update')"))?.code).toBe('23502');
   expect((await dbError(c, "INSERT INTO dimension_audit (change_set_id, table_name, column_name, op) VALUES (gen_random_uuid(),'company','x','update')"))?.code).toBe('23502');
   const { rows } = await c.query('SELECT changed_at IS NOT NULL AS ok, changed_by, reason FROM dimension_audit LIMIT 1');
   expect(rows[0]).toEqual({ ok: true, changed_by: null, reason: null });
   // polimórfica a propósito: apunta a una fila que no existe y no pasa nada
-  await c.query("INSERT INTO dimension_audit (change_set_id, table_name, row_id, column_name, op) VALUES (gen_random_uuid(),'tabla_que_no_existe',999999,'x','delete')");
+  await c.query("INSERT INTO dimension_audit (change_set_id, table_name, row_key, column_name, op) VALUES (gen_random_uuid(),'tabla_que_no_existe','{\"id\": 999999}','x','delete')");
   const fks = await pool.query("SELECT 1 FROM pg_constraint WHERE contype='f' AND (conrelid='dimension_audit'::regclass OR confrelid='dimension_audit'::regclass)");
   expect(fks.rows).toEqual([]);
 }));
@@ -81,24 +81,23 @@ test('el seed de validation_rule no revierte cambios operativos al relanzarse', 
   }
 });
 
-const F = "INSERT INTO data_quality_finding (rule_code, severity, target_table, target_row_id) VALUES ($1,$2,$3,$4)";
+const F = "INSERT INTO data_quality_finding (rule_code, severity, target_table, target_key) VALUES ($1,$2,$3,$4::jsonb)";
 
 test('data_quality_finding: FK a la regla, severity y status en dominio, defaults y sin FK al objetivo', () => inRollback(async (c) => {
-  await c.query(F, ['VENUE_UNMAPPED', 'warning', 'listing', 123456]); // la fila 123456 de listing no existe y no hace falta
+  await c.query(F, ['VENUE_UNMAPPED', 'warning', 'listing', '{"listing_id": 123456}']); // la fila no existe y no hace falta
   const row = (await c.query('SELECT status, detail, detected_at IS NOT NULL AS d, detected_by_run, resolved_at, resolved_by FROM data_quality_finding')).rows[0];
   expect(row).toEqual({ status: 'open', detail: null, d: true, detected_by_run: null, resolved_at: null, resolved_by: null });
-  expect((await dbError(c, F, ['REGLA_INEXISTENTE', 'warning', 'listing', 1]))?.code).toBe('23503');
-  expect((await dbError(c, F, ['YOY_JUMP', 'critical', 'listing', 1]))?.code).toBe('23514');
-  expect((await dbError(c, "INSERT INTO data_quality_finding (rule_code, severity, target_table, target_row_id, status) VALUES ('YOY_JUMP','warning','listing',1,'cerrado')"))?.code).toBe('23514');
-  expect((await dbError(c, "INSERT INTO data_quality_finding (rule_code, severity, target_row_id) VALUES ('YOY_JUMP','warning',1)"))?.code).toBe('23502');
+  expect((await dbError(c, F, ['REGLA_INEXISTENTE', 'warning', 'listing', '{"listing_id": 1}']))?.code).toBe('23503');
+  expect((await dbError(c, F, ['YOY_JUMP', 'critical', 'listing', '{"listing_id": 1}']))?.code).toBe('23514');
+  expect((await dbError(c, "INSERT INTO data_quality_finding (rule_code, severity, target_table, target_key, status) VALUES ('YOY_JUMP','warning','listing','{\"a\":1}','cerrado')"))?.code).toBe('23514');
+  expect((await dbError(c, "INSERT INTO data_quality_finding (rule_code, severity, target_key) VALUES ('YOY_JUMP','warning','{\"a\":1}')"))?.code).toBe('23502');
   expect((await dbError(c, "INSERT INTO data_quality_finding (rule_code, severity, target_table) VALUES ('YOY_JUMP','warning','listing')"))?.code).toBe('23502');
-  for (const st of ['open', 'reviewed', 'accepted', 'dismissed']) await c.query("INSERT INTO data_quality_finding (rule_code, severity, target_table, target_row_id, status) VALUES ('STALENESS','info','security',1,$1)", [st]);
-  // severity efectiva puede diferir del default de la regla
-  await c.query(F, ['YOY_JUMP', 'error', 'security', 2]);
+  // severity efectiva puede diferir del default de la regla (YOY_JUMP es warning por defecto)
+  await c.query(F, ['YOY_JUMP', 'error', 'security', '{"security_id": 2}']);
   // detail jsonb y corrida
   const run = await id(c, "INSERT INTO ingestion_run (provider, scope) VALUES ('eodhd','eod:US') RETURNING ingestion_run_id AS id");
-  await c.query("INSERT INTO data_quality_finding (rule_code, severity, target_table, target_row_id, detail, detected_by_run) VALUES ('CORPORATE_EVENT_CHANGED','warning','dividend',9,$1,$2)", [{ old: 0.27, new: 0.28 }, run]);
+  await c.query("INSERT INTO data_quality_finding (rule_code, severity, target_table, target_key, detail, detected_by_run) VALUES ('CORPORATE_EVENT_CHANGED','warning','dividend','{\"dividend_id\": 9}',$1,$2)", [{ old: 0.27, new: 0.28 }, run]);
   expect((await c.query("SELECT detail->>'new' AS n FROM data_quality_finding WHERE target_table='dividend'")).rows[0].n).toBe('0.28');
-  expect((await dbError(c, "INSERT INTO data_quality_finding (rule_code, severity, target_table, target_row_id, detected_by_run) VALUES ('YOY_JUMP','warning','security',1,999999)"))?.code).toBe('23503');
+  expect((await dbError(c, "INSERT INTO data_quality_finding (rule_code, severity, target_table, target_key, detected_by_run) VALUES ('YOY_JUMP','warning','security','{\"security_id\": 1}',999999)"))?.code).toBe('23503');
   expect((await dbError(c, "DELETE FROM validation_rule WHERE rule_code='VENUE_UNMAPPED'"))?.code).toBe('23503');
 }));

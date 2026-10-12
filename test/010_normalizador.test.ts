@@ -201,7 +201,7 @@ test('source_sector_map: la industria destino tiene que pertenecer al sector des
   expect((await dbError(c, "INSERT INTO source_sector_map (provider, provider_sector_label, sector_id) VALUES ('eodhd','Solo sector',$1)", [fin]))).toBeNull(); // industria '' por defecto
 }));
 
-test('company: sector e industria que casan pasan, discrepantes fallan; con solo uno puesto no se comprueba nada', () => inRollback(async (c) => {
+test('A4: company con sector e industria que casan pasa, discrepantes falla; con solo uno puesto no se comprueba nada', () => inRollback(async (c) => {
   const fin = await id(c, "INSERT INTO sector (code,name) VALUES ('fin_c','Financials') RETURNING sector_id AS id");
   const tec = await id(c, "INSERT INTO sector (code,name) VALUES ('tec_c','Tecnología') RETURNING sector_id AS id");
   const bank = await id(c, "INSERT INTO industry (sector_id, code, name) VALUES ($1,'bank_c','Banking') RETURNING industry_id AS id", [fin]);

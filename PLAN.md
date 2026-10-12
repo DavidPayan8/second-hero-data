@@ -120,6 +120,7 @@ Especificación: `docs/modelo/modelo-general.md` y cada par de chunk. Migracione
 | `010_normalizador` | INGESTION_RUN, PAYLOAD_BLOB, RAW_PAYLOAD, SOURCE_EXCHANGE, SOURCE_VENUE_MAP, SOURCE_HOLDER_MAP, SOURCE_SECTOR_MAP | ingesta, referencia, identidad, taxonomía |
 | `011_transversal` | DIMENSION_AUDIT, VALIDATION_RULE, DATA_QUALITY_FINDING | auditoría, validación |
 | `012_triggers` | ver abajo | etf, taxonomía, auditoría |
+| `013_clave_jsonb_findings` | (cambio sobre DIMENSION_AUDIT y DATA_QUALITY_FINDING: `row_key` / `target_key` jsonb; T4 en las 13 dimensiones; `app.op = 'merge'`; un solo finding abierto por regla y objetivo) | `decisiones-modelo-auditoria.md` §3-§5, `decisiones-modelo-validacion.md` §6 |
 
 Total: **36 tablas**.
 
@@ -133,19 +134,19 @@ Total: **36 tablas**.
 - `EARNINGS` PK `(security_id, fiscal_period_end, period_type)`; `report_time` CHECK.
 - `ETF_ALLOCATION`: UNIQUE `(security_id, as_of_date, dimension, bucket)`; `sector_id` FK nullable; `source` CHECK.
 - `RAW_PAYLOAD.provider_symbol` es TEXT **sin FK** (desacople deliberado). `content_hash` FK a `PAYLOAD_BLOB`.
-- `DIMENSION_AUDIT` y `DATA_QUALITY_FINDING`: `target_table`/`row_id` **sin FK** (polimórficas a propósito).
+- `DIMENSION_AUDIT` y `DATA_QUALITY_FINDING`: `table_name`/`row_key` y `target_table`/`target_key` **sin FK** (polimórficas a propósito).
 
 ### Triggers (`012_triggers`)
 
 - **T1** `SECURITY` BEFORE INSERT/UPDATE: `ASSET_TYPE.requires_company = true` ⇒ `company_id` NOT NULL; `false` ⇒ NULL.
 - **T2** `ASSET_TYPE` BEFORE UPDATE: `requires_company` inmutable si el tipo ya tiene securities.
 - ~~**T3**~~ Eliminado: la consistencia sector/industria de `COMPANY` es una FK compuesta `(industry_id, sector_id)` → `INDUSTRY` con `MATCH SIMPLE` (migración `010_normalizador`), no un trigger. Los triggers de esta migración son T1, T2 y T4.
-- **T4** (pendiente de P10 para `VALIDATION_RULE` y las cuatro `SOURCE_*`: su PK no es `bigint`; la `012_triggers` audita hoy las otras ocho) Auditoría AFTER INSERT/UPDATE/DELETE en COMPANY, SECURITY, LISTING, EXCHANGE, ASSET_TYPE, ETF_PROFILE, SECTOR, INDUSTRY, VALIDATION_RULE y las cuatro `SOURCE_*`. Una fila por columna que **realmente** cambió (`IS DISTINCT FROM`); `changed_by` y `reason` de `current_setting('app.actor', true)` / `('app.reason', true)`; `change_set_id` uno por transacción (si la app no puso `app.change_set_id`, el trigger lo fija con `set_config(…, true)`).
+- **T4** (`audit_dimension()` genérico: lee la PK de `pg_index` y la guarda como `row_key` jsonb; `012_triggers` lo puso en 8 tablas y `013_clave_jsonb_findings` lo extiende a las 13; `SET LOCAL app.op = 'merge'` marca como `merge` solo las filas de UPDATE y exige `app.reason`) Auditoría AFTER INSERT/UPDATE/DELETE en COMPANY, SECURITY, LISTING, EXCHANGE, ASSET_TYPE, ETF_PROFILE, SECTOR, INDUSTRY, VALIDATION_RULE y las cuatro `SOURCE_*`. Una fila por columna que **realmente** cambió (`IS DISTINCT FROM`); `changed_by` y `reason` de `current_setting('app.actor', true)` / `('app.reason', true)`; `change_set_id` uno por transacción (si la app no puso `app.change_set_id`, el trigger lo fija con `set_config(…, true)`).
 - En la app, `withActor(actor, reason, fn)`: abre transacción, hace `SET LOCAL` de las variables y ejecuta `fn`. Toda escritura del normalizador en dimensiones pasa por aquí.
 
 ### Seeds
 
-`ASSET_TYPE` (`common_stock`: en scope, requiere company; `etf`: en scope, no requiere), `EXCHANGE` (MICs del universo con `timezone` y `close_time`), `SOURCE_EXCHANGE` y `SOURCE_VENUE_MAP` (de lo visto en C5 y `exchanges-list`), `VALIDATION_RULE` (catálogo, ver Fase 4), `SECTOR`/`INDUSTRY` (provisional, D3).
+`ASSET_TYPE` (`common_stock`: en scope, requiere company; `etf`: en scope, no requiere), `EXCHANGE` (MICs del universo con `timezone` y `close_time`), `SOURCE_EXCHANGE` y `SOURCE_VENUE_MAP` (de lo visto en C5 y `exchanges-list`), `VALIDATION_RULE` (catálogo, ver Fase 4), `SECTOR`/`INDUSTRY` (D3: **aplazado al inicio de la Fase 3**, necesita las etiquetas reales de `fundamentals`; no bloquea la Fase 2).
 
 ### Aceptación (tests contra Postgres real)
 
@@ -161,6 +162,8 @@ Total: **36 tablas**.
 ---
 
 ## Fase 3 — Normalizador
+
+**Pendiente heredado de la Fase 2 (D3):** seed de `SECTOR` e `INDUSTRY` y de `SOURCE_SECTOR_MAP`. Necesita las etiquetas reales de sector e industria de `fundamentals` (C15), que el plan Free no da. Es lo primero de la Fase 3: el borrador propio (~11 sectores, sin copiar nombres ni códigos GICS, con Banking, Insurance y REITs como industrias) lo aprueba David.
 
 Especificación: `decisiones-modelo-ingesta.md`, `-referencia`, `-identidad`, `-taxonomia`, `-auditoria`.
 
@@ -199,6 +202,13 @@ Especificación: `decisiones-modelo-validacion.md`. El runner lee las reglas `en
 | `STALENESS` | Últimos fundamentales o último precio más viejos que el umbral → `warning`, objetivo `security`. |
 | `SECOND_SOURCE_MISMATCH` | Cross-check SEC EDGAR (abajo). |
 | `IDENTITY_ISOLATED`, `IDENTITY_RELINK_CONFLICT`, `HOLDER_UNMAPPED`, `SECTOR_UNMAPPED`, `VENUE_UNMAPPED`, `ASSET_TYPE_UNMAPPED` | Las emite el normalizador; aquí solo se catalogan. |
+
+**Reglas de los findings** (`decisiones-modelo-validacion.md` §6 y `modelo-entidades-validacion.md`; son para el runner, no se implementan antes de esta fase):
+- `target_key` se construye **en SQL desde la propia fila** (`jsonb_build_object('listing_id', p.listing_id, 'date', p.date)`), nunca a mano en TypeScript.
+- El productor inserta con `ON CONFLICT (rule_code, target_table, target_key) WHERE status = 'open' DO UPDATE SET detail = EXCLUDED.detail`; `detected_at` conserva la primera detección. `CORPORATE_EVENT_CHANGED` es la excepción: conserva el `old` del finding abierto y pone el `new` actual.
+- El runner **no emite** si ya existe un finding **cerrado** con la misma regla, objetivo y `detail` idéntico (si no, aceptar un `error` duraría hasta el siguiente pase). Un finding cerrado no se reabre: si el problema vuelve con otro `detail`, es uno nuevo.
+- El `detail` de cada regla sale **solo de los datos**: los valores evaluados, nunca la fecha del pase ni contadores que crecen solos (en `STALENESS`, la última fecha disponible, no "días de retraso"). Se prueba con tests del runner.
+- `DIVIDEND_SAME_EX_DATE` apunta a `target_table = 'raw_payload'`, `target_key = {"raw_payload_id": n}` (la fila no se llegó a crear). `STALENESS` apunta a `security` con `{"security_id": n}`.
 
 **Cross-check SEC EDGAR** (empresas de EEUU con CIK): comparar ingresos, beneficio neto y activo total del periodo equivalente. Dentro de tolerancia → `reported_at_source = 'cross_checked'` y `cross_checked_at = now()`. Fuera → finding `SECOND_SOURCE_MISMATCH`, sin tocar el enum. Respetar el límite de peticiones de la SEC.
 
