@@ -44,6 +44,13 @@ Una SECURITY nueva necesita `company_id` (NOT NULL por trigger para acciones). �
   - **Sin id fiable** → crear COMPANY por security, `identity_source = 'isolated'`, marcada para revisión/fusión manual posterior.
 - **`COMPANY.identity_source`** (`cik`|`lei`|`isolated`, `TEXT + CHECK`): registra **con qué evidencia** se agrupó. Mismo patrón que `reported_at_source`: no se agrupa sin dejar rastro de la evidencia.
 
+**`isolated` significa "miramos y no hay id", no "aún no hemos mirado"** (2026-10-12, al empezar los escritores). El CIK/LEI viene en `fundamentals` (`General`), no en `exchange-symbol-list`. Por eso:
+- Una acción (tipo con `requires_company`) **solo se crea cuando hay un payload de `fundamentals` de ese símbolo en `RAW_PAYLOAD`**. El escritor cruza la fila de `exchange-symbol-list` (venue, divisa, ISIN, tipo) con el último `fundamentals` del mismo símbolo.
+- Sin `fundamentals` todavía, la acción **se salta, sin finding**: no es un problema de calidad, es trabajo pendiente. Se cuenta en el registro de la corrida.
+- Con `fundamentals` y sin CIK ni LEI → `isolated` + `IDENTITY_ISOLATED`, como dice este §3.
+- Crear compañías `isolated` antes de ver `fundamentals` partiría cada doble clase (GOOGL/GOOG) en dos compañías que luego habría que fusionar a mano una a una.
+- Los ETF no necesitan compañía: su `SECURITY` y `LISTING` se crean desde `exchange-symbol-list` sin esperar.
+
 **Por qué B:** el coste de fusionar mal dos empresas distintas (heurística de nombres, Opción C) es catastrófico y casi inauditable. Aislar por defecto (Opción A pura) rompería la doble clase desde el día uno y obligaría a migraciones. B equilibra: id oficial robusto cuando lo hay; política conservadora ("mejor aislado y marcado que mal agrupado") cuando no. No inventar datos.
 
 ---
