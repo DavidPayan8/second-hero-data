@@ -140,7 +140,7 @@ Total: **36 tablas**.
 - **T1** `SECURITY` BEFORE INSERT/UPDATE: `ASSET_TYPE.requires_company = true` ⇒ `company_id` NOT NULL; `false` ⇒ NULL.
 - **T2** `ASSET_TYPE` BEFORE UPDATE: `requires_company` inmutable si el tipo ya tiene securities.
 - ~~**T3**~~ Eliminado: la consistencia sector/industria de `COMPANY` es una FK compuesta `(industry_id, sector_id)` → `INDUSTRY` con `MATCH SIMPLE` (migración `010_normalizador`), no un trigger. Los triggers de esta migración son T1, T2 y T4.
-- **T4** Auditoría AFTER INSERT/UPDATE/DELETE en COMPANY, SECURITY, LISTING, EXCHANGE, ASSET_TYPE, ETF_PROFILE, SECTOR, INDUSTRY, VALIDATION_RULE y las cuatro `SOURCE_*`. Una fila por columna que **realmente** cambió (`IS DISTINCT FROM`); `changed_by` y `reason` de `current_setting('app.actor', true)` / `('app.reason', true)`; `change_set_id` uno por transacción (si la app no puso `app.change_set_id`, el trigger lo fija con `set_config(…, true)`).
+- **T4** (pendiente de P10 para `VALIDATION_RULE` y las cuatro `SOURCE_*`: su PK no es `bigint`; la `012_triggers` audita hoy las otras ocho) Auditoría AFTER INSERT/UPDATE/DELETE en COMPANY, SECURITY, LISTING, EXCHANGE, ASSET_TYPE, ETF_PROFILE, SECTOR, INDUSTRY, VALIDATION_RULE y las cuatro `SOURCE_*`. Una fila por columna que **realmente** cambió (`IS DISTINCT FROM`); `changed_by` y `reason` de `current_setting('app.actor', true)` / `('app.reason', true)`; `change_set_id` uno por transacción (si la app no puso `app.change_set_id`, el trigger lo fija con `set_config(…, true)`).
 - En la app, `withActor(actor, reason, fn)`: abre transacción, hace `SET LOCAL` de las variables y ejecuta `fn`. Toda escritura del normalizador en dimensiones pasa por aquí.
 
 ### Seeds

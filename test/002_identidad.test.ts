@@ -55,11 +55,12 @@ test('company: country_iso alfa-2, mes fiscal 1-12, FK de sector e industria', (
 test('security: isin único, varios NULL, company_id nullable y FK de asset_type', () => inRollback(async (c) => {
   const co = await company(c);
   await security(c, co, 'US0378331005');
-  expect((await dbError(c, "INSERT INTO security (company_id, asset_type_id, isin) VALUES ($1, (SELECT asset_type_id FROM asset_type LIMIT 1), 'US0378331005')", [co]))?.code).toBe('23505');
-  await security(c, co, null); await security(c, null, null);
+  expect((await dbError(c, "INSERT INTO security (company_id, asset_type_id, isin) VALUES ($1, (SELECT asset_type_id FROM asset_type WHERE code='common_stock'), 'US0378331005')", [co]))?.code).toBe('23505');
+  await security(c, co, null); // varios isin NULL
+  await c.query("INSERT INTO security (company_id, asset_type_id) VALUES (NULL, (SELECT asset_type_id FROM asset_type WHERE code='etf'))"); // ETF: company_id NULL (T1)
   expect((await dbError(c, 'INSERT INTO security (company_id, asset_type_id) VALUES ($1, 999999)', [co]))?.code).toBe('23503');
   expect((await dbError(c, 'INSERT INTO security (company_id) VALUES ($1)', [co]))?.code).toBe('23502');
-  expect((await dbError(c, 'INSERT INTO security (company_id, asset_type_id) VALUES (999999, (SELECT asset_type_id FROM asset_type LIMIT 1))'))?.code).toBe('23503');
+  expect((await dbError(c, "INSERT INTO security (company_id, asset_type_id) VALUES (999999, (SELECT asset_type_id FROM asset_type WHERE code='common_stock'))"))?.code).toBe('23503');
 }));
 
 test('listing: provider_symbol único y campos obligatorios', () => inRollback(async (c) => {
