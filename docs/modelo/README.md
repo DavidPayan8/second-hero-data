@@ -41,7 +41,7 @@
 
 - **No se almacena lo que se puede derivar sin ambigüedad.** "Primitivo" es relativo al límite del sistema: un agregado de origen que no podemos descomponer (consenso de analistas, `shares_float`) se guarda tal cual.
 - **Tres patrones temporales:** bitemporal (hechos que se restatean: `FUNDAMENTALS`), snapshot-temporal (series que cambian sin restatearse y son señal: ownership, short interest, NAV, holdings), hecho-puntual (eventos que ocurren una vez: `DIVIDEND`, `STOCK_SPLIT`, `INSIDER_TRANSACTION`).
-- **Divisa explícita siempre que un monto no sea obviamente el de cotización** (`FUNDAMENTALS.currency`, `DIVIDEND.currency`, `ANALYST_CONSENSUS.target_currency`, `ETF_NAV_DAILY.nav_currency`).
+- **Divisa explícita siempre que un monto no sea obviamente el de cotización** (`FUNDAMENTALS.currency`, `DIVIDEND.currency`, `ANALYST_CONSENSUS.target_currency`, `ETF_SNAPSHOT.currency`).
 - **Comportamiento de tipo como dato, no como código** (`ASSET_TYPE.in_screener_scope`, `ASSET_TYPE.requires_company`): un tipo nuevo se añade con una fila, no con un despliegue.
 - **Procedencia explícita cuando una fecha/valor puede ser estimado** (`reported_at_source`): nunca un valor inventado sin marcar como tal.
 

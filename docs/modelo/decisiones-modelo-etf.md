@@ -32,7 +32,7 @@ Un ETF encaja en media parte del modelo y no en la otra:
 ### Corolarios
 - **El materializador ramifica por tipo igualmente.** Un ETF no tiene EPS → no pasa por el cálculo de P/E; calcula expense ratio, prima/descuento sobre NAV, etc. Esa bifurcación acción-vs-ETF es inevitable en las tres opciones, así que meter el ETF en COMPANY no "unificaría" nada, solo ensuciaría la dimensión.
 - **Eventos ya cubiertos:** splits y distribuciones del ETF entran por STOCK_SPLIT/DIVIDEND (cuelgan de SECURITY) sin tocar nada.
-- **Flag para las tablas de datos:** `SHARES_OUTSTANDING` es bitemporal (`reported_at`), pero las acciones de un ETF cambian por creation/redemption, no por resultados que se restaten. Para ETF ese eje bitemporal es ruido → resuelto como snapshot-temporal en `ETF_NAV_DAILY` (ver §2.b).
+- **Flag para las tablas de datos:** `SHARES_OUTSTANDING` es bitemporal (`reported_at`), pero las acciones de un ETF cambian por creation/redemption, no por resultados que se restaten. Para ETF ese eje bitemporal es ruido → resuelto como snapshot-temporal en `ETF_SNAPSHOT` (ver §2.b).
 
 ---
 
@@ -44,14 +44,18 @@ Cuatro tablas nuevas, todas colgando de SECURITY. Ninguna toca el núcleo salvo 
 
 - Campos: `issuer` (gestora, **texto en v1 = gancho a Opción C**), `inception_date`, `index_tracked`, `category`/`asset_class`, `domicile`, `expense_ratio`.
 - Patrón: **dimensión mutable**. Su historial lo cubre el **log de correcciones** (pendiente global, ver `README.md`), no una serie propia.
-- **`expense_ratio`:** se queda en el perfil (dimensión); su historial vive en el log de correcciones. Candidato a serie temporal propia en el futuro si aparece requisito.
+- **`expense_ratio`:** se queda en el perfil (dimensión); su historial vive en el log de correcciones (`ETF_PROFILE` está en la lista de tablas auditadas). Candidato a serie temporal propia en el futuro si aparece requisito.
+- **Unidad y fuente (P7, 2026-10-10):** `expense_ratio` se guarda **en fracción** (0.0003 = 0,03 %), que es como viene el `NetExpenseRatio` del proveedor; `Yield` no es un expense ratio y no se usa. `CHECK (expense_ratio >= 0 AND expense_ratio < 0.1)` como guarda de unidades: un valor en porcentaje (0.20 queriendo decir 0,20 %) cae fuera y falla en vez de entrar como un 20 %. Un `0` se guarda tal cual: existen ETFs con comisión cero y no se puede distinguir de "no informado" sin inventar.
+- **`category`** nullable (la doc lo muestra vacío) y **`domicile`** como texto del proveedor (viene el nombre del país, no un código ISO); no se traduce a ISO en v1.
 
-### 2.b `ETF_NAV_DAILY` — serie diaria
+### 2.b `ETF_SNAPSHOT` — cifras del fondo observadas (antes `ETF_NAV_DAILY`)
 
-- Campos: `date`, `nav`, `nav_currency`, `aum`/`net_assets`, `shares_outstanding_etf`.
-- PK natural `(security_id, date)`. Hermana de PRICES_DAILY.
-- **Separada de PRICES_DAILY a propósito:** el NAV **no es el precio de mercado**; el ETF cotiza con prima/descuento sobre NAV, y esa diferencia es señal derivada que solo existe si guardas ambos. `nav_currency` explícito.
-- **Resuelve el flag de SHARES_OUTSTANDING:** las acciones del ETF (creation/redemption) van aquí como serie diaria, **no** en `SHARES_OUTSTANDING` bitemporal (no se restatean).
+**Cambio (P7, 2026-10-10).** La primera versión era una serie diaria de NAV. Según la documentación de EODHD, **para ETFs no hay NAV diario**: solo `TotalAssets`, un valor puntual **sin fecha** (los historiales de NAV aparecen solo para fondos de inversión, fuera de alcance). Una tabla llamada "NAV diario" sin fuente de NAV diario sería engañosa, así que se renombra y se rehace con el mismo patrón que `SHORT_INTEREST`:
+
+- Campos: `as_of_date` (día en que lo **observamos**), `aum` (`TotalAssets`, nullable), `nav` (nullable, por si un proveedor futuro lo da), `currency` (obligatoria si hay `aum` o `nav`: `CHECK`), `shares_outstanding_etf` (nullable).
+- PK natural `(security_id, as_of_date)`. **Deduplicación por valor**: no se inserta una fila igual a la última de ese ETF.
+- **Consecuencia de producto:** sin NAV no hay **prima/descuento sobre NAV**. Esa métrica queda fuera de v1 mientras el proveedor no dé NAV para ETFs.
+- Las acciones del ETF (creation/redemption) siguen aquí y **no** en `SHARES_OUTSTANDING` bitemporal (no se restatean).
 
 ### 2.c `ETF_HOLDING` — snapshot-temporal (identidad del constituyente: columnas ahora, resolución después)
 
@@ -59,24 +63,33 @@ Cuatro tablas nuevas, todas colgando de SECURITY. Ninguna toca el núcleo salvo 
 - Patrón: **snapshot-temporal** (`as_of_date` en clave, histórico conservado — la rotación de holdings es señal). `id` sintético + `UNIQUE (security_id, constituent_key, as_of_date)` (clave natural con string libre → misma regla que `HOLDER_POSITION`).
 - **Constituyente = una SECURITY que a menudo ya tienes.** Por eso `constituent_security_id` FK cuando está en tu universo, con `constituent_isin`/`name` de fallback (bonos, activos fuera de cobertura). Regalo: "qué ETFs contienen esta acción" se vuelve una query.
 - **Separación columna/resolución (decidido):** las **columnas se fijan ahora**; la **lógica de resolución** ISIN→`security_id` (con anclado estable, herencia de la regla de `holder_ref`) se **difiere al normalizador**. Mismo patrón que el `.US`: la columna existe, el lookup se difiere. → pendiente.
+- **Actualización (P7, 2026-10-10):** según la documentación, los holdings **no traen ISIN**: vienen indexados por el símbolo del proveedor (`AAPL.US`) y sin importe, acciones ni fecha de la posición. Cambios:
+  - Nueva columna **`constituent_symbol`** (texto del proveedor). Se resuelve a `constituent_security_id` por el crosswalk de `LISTING.provider_symbol`, el mismo camino rápido que el resto del normalizador.
+  - **La clave única usa solo identificadores que da el proveedor, nunca nuestra resolución**: `UNIQUE (security_id, as_of_date, COALESCE(constituent_symbol, constituent_isin, constituent_name))`. Si la clave dependiera de `constituent_security_id`, una resolución que cambia entre ejecuciones duplicaría la fila. CHECK `etf_holding_has_constituent`: al menos uno de los tres.
+  - `as_of_date` = día de observación; deduplicación del **conjunto** de holdings: si es idéntico al último guardado de ese ETF, no se inserta.
 
 ### 2.d `ETF_ALLOCATION` — snapshot-temporal (proveedor canónico, derivación como validación)
 
-- Campos: `as_of_date`, `dimension` (sector/country/asset_type), `bucket` (p. ej. "Technology"), `weight_pct`, `source` (`provider`|`derived`).
+- Campos: `as_of_date`, `dimension`, `bucket` (p. ej. "Technology"), `weight_pct`, `source` (`provider`|`derived`).
+- **Dominio de `dimension` (P7, 2026-10-10):** `sector` | `region` | `market_cap` | `asset_class`. Es vocabulario nuestro (CHECK); los `bucket` son del proveedor (sin CHECK). Sustituye a la primera versión (`sector`/`country`/`asset_type`):
+  - **`country` desaparece:** el proveedor mezcla países y regiones en el mismo bloque. Se guarda tal cual como `region`; separar países sería interpretar.
+  - **`asset_type` pasa a `asset_class`** (acciones, bonos, liquidez) para no confundirlo con `ASSET_TYPE` del núcleo, que es otra cosa.
+  - **`market_cap`** es nueva: el proveedor la da y no se puede reconstruir sin los holdings completos.
+- **Un único peso:** para clases de activo el proveedor da tres (`Long_%`, `Short_%`, `Net_Assets_%`); se guarda el **neto** como `weight_pct`. Largo y corto solo importan para ETFs apalancados o inversos y no entran en v1; siguen en el payload crudo y se pueden reprocesar si hacen falta. Las etiquetas de sector son de estilo Morningstar y pasan por `SOURCE_SECTOR_MAP` como cualquier otra.
 - Patrón: snapshot-temporal. `id` sintético + `UNIQUE (security_id, as_of_date, dimension, bucket)` (bucket es string libre).
 - **Decisión (evita `weight_pct` con dos significados):**
   - **Se guarda SIEMPRE la allocation del proveedor como hecho canónico** ("primitivo dentro de nuestro límite", como el analyst consensus). Es lo que se sirve al usuario: una sola definición, consistente entre todos los ETFs. `source = 'provider'`.
   - **La derivación propia** (sumar `ETF_HOLDING` × sector del constituyente) **NO sustituye** al dato servido: se usa como **regla de validación** (cross-check — si tu suma se aleja mucho de la del proveedor, hay un dato malo). Alimenta la capa de validación pendiente.
   - **Si el proveedor NO da allocation** para un ETF, se deriva como único recurso y se marca **`source = 'derived'`** (procedencia explícita, lección de `reported_at_source`). Nunca se mezcla dato de proveedor y derivado sin rastro.
 - **La derivación como cross-check requiere umbral de cobertura de holdings** (no fiarse si falta demasiado del ETF) → detalle de la capa de validación.
-- **Vocabulario sectorial unificado (decidido):** cuando `dimension='sector'`, el `bucket` del proveedor se **mapea al `SECTOR` canónico** vía `SOURCE_SECTOR_MAP` (la misma tabla que clasifica empresas), guardando `ETF_ALLOCATION.sector_id`. Sin esto habría dos vocabularios de sector incompatibles (el canónico de acciones y el texto de ETF), y un filtro por "Technology" devolvería resultados incoherentes entre acciones y ETFs. `bucket` se conserva como texto crudo del proveedor (display/fallback); `sector_id` es el enlace canónico. Bucket sin mapeo → `sector_id` NULL + finding `SECTOR_UNMAPPED`. `country`/`asset_type` no se mapean (sector_id NULL).
+- **Vocabulario sectorial unificado (decidido):** cuando `dimension='sector'`, el `bucket` del proveedor se **mapea al `SECTOR` canónico** vía `SOURCE_SECTOR_MAP` (la misma tabla que clasifica empresas), guardando `ETF_ALLOCATION.sector_id`. Sin esto habría dos vocabularios de sector incompatibles (el canónico de acciones y el texto de ETF), y un filtro por "Technology" devolvería resultados incoherentes entre acciones y ETFs. `bucket` se conserva como texto crudo del proveedor (display/fallback); `sector_id` es el enlace canónico. Bucket sin mapeo → `sector_id` NULL + finding `SECTOR_UNMAPPED`. El resto de dimensiones no se mapean (`sector_id` NULL; CHECK `etf_allocation_sector_only_for_sector`).
 
 ---
 
 ## 3. Derivados de este chunk (NO en la fuente de verdad)
 
-- **Performance del ETF** (1d/1m/1y…) → de la serie NAV/precio.
-- **`premium_discount`** = `(precio − nav) / nav` → cruce PRICES_DAILY × ETF_NAV_DAILY.
+- **Performance del ETF** (1d/1m/1y…) → de la serie de precios.
+- ~~**`premium_discount`**~~ → **no disponible en v1**: el proveedor no da NAV para ETFs (§2.b).
 - **`change` de un holding** → comparar filas consecutivas de ETF_HOLDING (por `constituent_security_id`, fallback `constituent_isin`/`name`).
 - **Allocation derivada** → NO se sirve (es validación); solo se materializa como dato servido cuando `source = 'derived'` (proveedor no la dio).
 
@@ -87,4 +100,18 @@ Cuatro tablas nuevas, todas colgando de SECURITY. Ninguna toca el núcleo salvo 
 - **Resolución de identidad del constituyente** (`ETF_HOLDING`): lógica ISIN→`security_id` con anclado estable, al normalizador. Verificar shape del endpoint de holdings de EODHD en vivo.
 - **`expense_ratio`**: promover a serie temporal si aparece requisito.
 - **Umbral de cobertura** para validar allocation derivada vs. proveedor → capa de validación.
-- **Verificar en vivo** el bloque `ETF_Data` de EODHD (NAV, holdings, allocations) — shape no confirmado contra respuesta real.
+- **Verificar en vivo** el bloque `ETF_Data` de EODHD (holdings, allocations, `TotalAssets` y su divisa) — todo lo de P7 sale de documentación, no de payloads.
+- **Coste:** cada respuesta de fundamentales de un ETF cuesta 10 llamadas y pasa de 100 KB. Como los datos cambian poco y hay deduplicación por valor, la cadencia de refresco de ETFs será semanal o mensual, no diaria (se decide en la Fase 3).
+
+---
+
+## 5. Contraste con la documentación de EODHD (propuesta P7)
+
+| | Discrepancia | Decisión |
+|---|---|---|
+| a | No hay NAV diario de ETFs, solo `TotalAssets` sin fecha | `ETF_NAV_DAILY` pasa a `ETF_SNAPSHOT` por día de observación; sin prima/descuento en v1 (§2.b). |
+| b | Holdings por símbolo, sin ISIN, importe ni fecha | Columna `constituent_symbol`; clave solo con identificadores del proveedor (§2.c). |
+| c | Allocation por región mezclada, capitalización y tres pesos | Dimensiones `sector`/`region`/`market_cap`/`asset_class`; solo el peso neto (§2.d). |
+| d | Tres candidatos a expense ratio, unidades distintas | `NetExpenseRatio` en fracción, CHECK de unidades, el 0 se guarda (§2.a). |
+| e | `Category` vacío, `Domicile` como nombre | Ambos texto del proveedor, nullable (§2.a). |
+| f | 10 llamadas y >100 KB por respuesta | Refresco semanal o mensual (§4). |

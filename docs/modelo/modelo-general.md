@@ -46,7 +46,7 @@ Entre medias hay **cuatro capas reales**: normalizador (ingesta), fuente de verd
    │   Ownership:  HOLDER_POSITION · INSIDER_TRANSACTION ·        │
    │               OWNERSHIP_SNAPSHOT · ANALYST_CONSENSUS ·       │
    │               SHORT_INTEREST                                │
-   │   ETF:        ETF_PROFILE · ETF_NAV_DAILY · ETF_HOLDING ·    │
+   │   ETF:        ETF_PROFILE · ETF_SNAPSHOT · ETF_HOLDING ·    │
    │               ETF_ALLOCATION                                │
    └───────┬─────────────────────────────────────────────┬───────┘
            │ (transversal)                                │
@@ -105,7 +105,7 @@ erDiagram
   SECURITY ||--o{ SHORT_INTEREST : "short as of"
 
   SECURITY ||--o| ETF_PROFILE : "is an ETF"
-  SECURITY ||--o{ ETF_NAV_DAILY : "nav series"
+  SECURITY ||--o{ ETF_SNAPSHOT : "fund figures as of"
   SECURITY ||--o{ ETF_HOLDING : holds
   SECURITY ||--o{ ETF_ALLOCATION : "exposure as of"
   SECTOR |o--o{ ETF_ALLOCATION : "sector canonico (dimension=sector)"
@@ -323,17 +323,17 @@ erDiagram
     date inception_date
     text index_tracked
     text category
-    text domicile
-    numeric expense_ratio "historial via DIMENSION_AUDIT"
+    text domicile "nombre del pais segun proveedor (no ISO)"
+    numeric expense_ratio "fraccion, CHECK 0..0.1; historial via DIMENSION_AUDIT"
   }
 
-  ETF_NAV_DAILY {
+  ETF_SNAPSHOT {
     bigint security_id PK "FK"
-    date date PK
-    numeric nav
-    text nav_currency "explicito"
-    numeric aum
-    numeric shares_outstanding_etf "creation/redemption"
+    date as_of_date PK "dia de observacion; dedup por valor"
+    numeric aum "TotalAssets, nullable"
+    numeric nav "nullable: EODHD no da NAV de ETFs"
+    text currency "obligatoria si hay aum o nav (CHECK)"
+    numeric shares_outstanding_etf "nullable; creation/redemption, NO bitemporal"
   }
 
   ETF_HOLDING {
@@ -341,6 +341,7 @@ erDiagram
     bigint security_id FK "el ETF"
     date as_of_date "snapshot-temporal"
     bigint constituent_security_id FK "a SECURITY si esta; NULL->fallback"
+    text constituent_symbol "simbolo del proveedor; clave preferida"
     text constituent_isin "fallback"
     text constituent_name "fallback/display"
     numeric weight_pct "NOT NULL: define el holding"
@@ -352,7 +353,7 @@ erDiagram
     bigint id PK
     bigint security_id FK
     date as_of_date "snapshot-temporal"
-    text dimension "sector|country|asset_type"
+    text dimension "sector|region|market_cap|asset_class"
     text bucket "texto proveedor (display/fallback)"
     bigint sector_id FK "nullable: -> SECTOR canonico si dimension='sector' (via SOURCE_SECTOR_MAP)"
     numeric weight_pct
@@ -513,7 +514,7 @@ erDiagram
 | Entidad | PK | Patrón temporal | Chunk |
 |---|---|---|---|
 | **ETF_PROFILE** | `security_id` | Dimensión | etf |
-| **ETF_NAV_DAILY** | `(security_id, date)` | Serie diaria | etf |
+| **ETF_SNAPSHOT** | `(security_id, as_of_date)` | Snapshot-temporal | etf |
 | **ETF_HOLDING** | `id` + UNIQUE | Snapshot-temporal | etf |
 | **ETF_ALLOCATION** | `id` + UNIQUE | Snapshot-temporal | etf |
 
@@ -546,7 +547,7 @@ Todo esto se **deriva** en la capa VISTAS, no se almacena (principio rector):
 - **Precio ajustado (splits / total-return)** — PRICES_DAILY (bruto) × factores de STOCK_SPLIT/DIVIDEND.
 - **RSI, SMA, MACD, 52w, volumen medio** — sobre serie ajustada.
 - **short_ratio, short_percent_float** — de SHORT_INTEREST × PRICES_DAILY / OWNERSHIP_SNAPSHOT.
-- **premium_discount ETF** — (precio − nav) / nav.
+- ~~**premium_discount ETF**~~ — no disponible en v1: EODHD no da NAV de ETFs (`decisiones-modelo-etf.md` §2.b).
 - **Sorpresa de earnings** — EARNINGS.eps_estimate × EPS real derivado.
 - **Business Score (5 pilares) + percentil sector×región** — todo el ranking.
 - **Frescura** ("datos a 30/06/2026") — `max(reported_at)` / `max(PRICES_DAILY.date)`.

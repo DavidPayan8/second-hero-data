@@ -5,7 +5,7 @@ Continúa la fuente de verdad. Identidad del ETF = Opción B (`SECURITY.company_
 ```mermaid
 erDiagram
   SECURITY ||--o| ETF_PROFILE : "is an ETF"
-  SECURITY ||--o{ ETF_NAV_DAILY : "nav series"
+  SECURITY ||--o{ ETF_SNAPSHOT : "fund figures as of"
   SECURITY ||--o{ ETF_HOLDING : holds
   SECURITY ||--o{ ETF_ALLOCATION : "exposure as of"
   SECURITY |o--o{ ETF_HOLDING : "is constituent of"
@@ -15,18 +15,18 @@ erDiagram
     text issuer "gestora (texto v1 = gancho a Opcion C)"
     date inception_date
     text index_tracked
-    text category "asset_class"
-    text domicile
-    numeric expense_ratio "dimension; historial via log de correcciones (pendiente global, mecanismo sin decidir); candidato a serie futura"
+    text category "nullable, texto del proveedor"
+    text domicile "nombre del pais segun proveedor (no ISO)"
+    numeric expense_ratio "fraccion (0.0003=0,03%), CHECK 0..0.1; historial via DIMENSION_AUDIT"
   }
 
-  ETF_NAV_DAILY {
+  ETF_SNAPSHOT {
     bigint security_id PK "FK"
-    date date PK
-    numeric nav
-    text nav_currency "explicito"
-    numeric aum "net_assets"
-    numeric shares_outstanding_etf "creation/redemption, NO bitemporal"
+    date as_of_date PK "dia de observacion; dedup por valor"
+    numeric aum "TotalAssets, nullable"
+    numeric nav "nullable: EODHD no da NAV de ETFs"
+    text currency "obligatoria si hay aum o nav (CHECK)"
+    numeric shares_outstanding_etf "nullable; creation/redemption, NO bitemporal"
   }
 
   ETF_HOLDING {
@@ -34,6 +34,7 @@ erDiagram
     bigint security_id FK "el ETF"
     date as_of_date "snapshot-temporal, historico conservado"
     bigint constituent_security_id FK "a SECURITY del nucleo si esta; NULL -> fallback"
+    text constituent_symbol "simbolo del proveedor (AAPL.US); clave preferida"
     text constituent_isin "fallback identidad"
     text constituent_name "fallback / display"
     numeric weight_pct "NOT NULL: define el holding"
@@ -45,10 +46,10 @@ erDiagram
     bigint id PK
     bigint security_id FK
     date as_of_date "snapshot-temporal, historico conservado"
-    text dimension "sector | country | asset_type"
+    text dimension "sector | region | market_cap | asset_class (CHECK)"
     text bucket "texto del proveedor (display/fallback), ej. Technology"
-    bigint sector_id FK "nullable: canonico cuando dimension='sector' (via SOURCE_SECTOR_MAP); NULL en country/asset_type o si bucket no mapea"
-    numeric weight_pct
+    bigint sector_id FK "nullable: canonico cuando dimension='sector' (via SOURCE_SECTOR_MAP); NULL en otras dimensiones o si bucket no mapea"
+    numeric weight_pct "peso neto"
     text source "provider (canonico) | derived (solo si proveedor no la da)"
   }
 ```
@@ -58,18 +59,18 @@ erDiagram
 | Entidad | Cuelga de | PK | Patrón temporal |
 |---|---|---|---|
 | **ETF_PROFILE** | SECURITY (1:1) | natural `security_id` | Dimensión — historial vía log de correcciones (pendiente global). |
-| **ETF_NAV_DAILY** | SECURITY | natural `(security_id, date)` | Serie diaria. |
-| **ETF_HOLDING** | SECURITY (+ FK opcional a SECURITY constituyente) | `id` + `UNIQUE (security_id, constituent_key, as_of_date)` | Snapshot-temporal — histórico conservado. |
+| **ETF_SNAPSHOT** | SECURITY | natural `(security_id, as_of_date)`; dedup por valor | Snapshot-temporal (antes `ETF_NAV_DAILY`, ver decisiones §2.b). |
+| **ETF_HOLDING** | SECURITY (+ FK opcional a SECURITY constituyente) | `id` + `UNIQUE (security_id, as_of_date, COALESCE(constituent_symbol, constituent_isin, constituent_name))` | Snapshot-temporal — histórico conservado. |
 | **ETF_ALLOCATION** | SECURITY | `id` + `UNIQUE (security_id, as_of_date, dimension, bucket)` | Snapshot-temporal — histórico conservado. |
 
-**`constituent_key`** = `constituent_security_id` cuando resuelto, si no `constituent_isin`, si no `constituent_name`. La resolución estable ISIN→security se difiere al normalizador (ver decisiones §2.c).
+**Clave del constituyente:** solo identificadores del proveedor (`constituent_symbol`, luego `constituent_isin`, luego `constituent_name`), nunca nuestra resolución, para que una resolución que cambie no duplique filas. La resolución estable ISIN→security se difiere al normalizador (ver decisiones §2.c).
 
 **`ETF_ALLOCATION.sector_id`** (vocabulario unificado): cuando `dimension='sector'`, el `bucket` del proveedor se resuelve a nuestro `SECTOR` canónico vía `SOURCE_SECTOR_MAP` (misma tabla que las empresas), y se guarda `sector_id`. `bucket` se conserva como texto del proveedor (display/fallback). Así un filtro "Technology" cruza acciones y ETFs en un único vocabulario. Bucket sin mapeo → `sector_id` NULL + finding `SECTOR_UNMAPPED`. En `dimension='country'|'asset_type'`, `sector_id` es NULL.
 
 ## Derivados de este chunk (NO en la fuente de verdad)
 
 - **Performance ETF** = serie NAV/precio.
-- **`premium_discount`** = `(precio − nav) / nav` (PRICES_DAILY × ETF_NAV_DAILY).
+- ~~**`premium_discount`**~~: no disponible en v1 (sin NAV de ETFs).
 - **`change` de holding** = filas consecutivas de ETF_HOLDING.
 - **Allocation derivada** = ETF_HOLDING × sector del constituyente → **solo validación** (cross-check contra `source='provider'`), no se sirve; se sirve derivada solo cuando el proveedor no la da (`source='derived'`).
 
