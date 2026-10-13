@@ -39,14 +39,14 @@ async function makeStock(symbol: string, opts: { primary?: boolean; security?: s
   await pool.query("INSERT INTO listing (security_id, ticker, provider_symbol, quote_currency, status, is_primary_listing) VALUES ($1, $2, $3, 'USD', 'active', $4)", [security, symbol.split('.')[0], symbol, opts.primary ?? true]);
   return { company, security };
 }
-async function makeEtf(symbol: string) {
+async function makeEtf(symbol: string, mic: string | null = 'ARCX') {
   const security = (await pool.query<{ id: string }>("INSERT INTO security (company_id, asset_type_id) VALUES (NULL, (SELECT asset_type_id FROM asset_type WHERE code = 'etf')) RETURNING security_id AS id")).rows[0]!.id;
-  await pool.query("INSERT INTO listing (security_id, ticker, provider_symbol, quote_currency, status, is_primary_listing) VALUES ($1, $2, $3, 'USD', 'active', true)", [security, symbol.split('.')[0], symbol]);
+  await pool.query("INSERT INTO listing (security_id, exchange_id, ticker, provider_symbol, quote_currency, status, is_primary_listing) VALUES ($1, (SELECT exchange_id FROM exchange WHERE mic = $4), $2, $3, 'USD', 'active', true)", [security, symbol.split('.')[0], symbol, mic]);
   return { security };
 }
 
 // Estados de un periodo. `over` pisa campos de cada estado.
-const bs = (d: string, filing: string | null, over: Record<string, unknown> = {}) => ({ date: d, filing_date: filing, currency_symbol: 'USD', totalAssets: '1000.00', cash: '100.00', totalStockholderEquity: '400.00', shortLongTermDebtTotal: '250.00', ...over });
+const bs = (d: string, filing: string | null, over: Record<string, unknown> = {}) => ({ date: d, filing_date: filing, currency_symbol: 'USD', totalAssets: '1000.00', cash: '100.00', totalStockholderEquity: '400.00', shortLongTermDebtTotal: '250.00', shortTermDebt: '60.00', longTermDebt: '150.00', totalLiab: '600.00', ...over });
 const is = (d: string, filing: string | null, over: Record<string, unknown> = {}) => ({ date: d, filing_date: filing, currency_symbol: 'USD', totalRevenue: '500.00', grossProfit: '200.00', ebitda: '90.00', operatingIncome: '70.00', netIncome: '50.00', ...over });
 const cf = (d: string, filing: string | null, over: Record<string, unknown> = {}) => ({ date: d, filing_date: filing, currency_symbol: 'USD', totalCashFromOperatingActivities: '80.00', capitalExpenditures: '30', ...over });
 const sections = (q: Record<string, [unknown, unknown, unknown]>, y: Record<string, [unknown, unknown, unknown]> = {}, cur: string | null = 'USD') => ({
@@ -61,7 +61,7 @@ const stockBody = (extra: Record<string, unknown> = {}, general: Record<string, 
 const rows = async () => (await pool.query(
   `SELECT period_end::text AS period_end, period_type, reported_at::text AS reported_at, reported_at_source AS src, currency, revenue::text AS revenue, gross_profit::text AS gross_profit,
           ebitda::text AS ebitda, operating_income::text AS operating_income, net_income::text AS net_income, operating_cf::text AS operating_cf, capex::text AS capex,
-          total_debt::text AS total_debt, cash::text AS cash, total_equity::text AS total_equity, total_assets::text AS total_assets FROM fundamentals ORDER BY period_type, period_end, reported_at`)).rows;
+          total_debt::text AS total_debt, short_term_debt::text AS short_term_debt, long_term_debt::text AS long_term_debt, total_liabilities::text AS total_liabilities, cash::text AS cash, total_equity::text AS total_equity, total_assets::text AS total_assets FROM fundamentals ORDER BY period_type, period_end, reported_at`)).rows;
 const findings = async (rule: string) => (await pool.query('SELECT target_table, target_key, severity, status, detail FROM data_quality_finding WHERE rule_code = $1 ORDER BY finding_id', [rule])).rows;
 const count = async (table: string) => (await pool.query<{ n: number }>(`SELECT count(*)::int AS n FROM ${table}`)).rows[0]!.n;
 
@@ -76,8 +76,8 @@ describe('FUNDAMENTALS (acciones)', () => {
     expect(out).toMatchObject({ checked: 1, ok: 1, error: 0, deferred: 0 });
     expect(out.fundamentals).toMatchObject({ payloads: 1, periods: 2, fundamentalsInserted: 2, fundamentalsRevised: 0, discarded: 0 });
     expect(await rows()).toEqual([
-      { period_end: '2025-09-30', period_type: 'A', reported_at: '2025-10-31', src: 'provider', currency: 'USD', revenue: '500.00', gross_profit: '200.00', ebitda: '90.00', operating_income: '70.00', net_income: '50.00', operating_cf: '80.00', capex: '30', total_debt: '250.00', cash: '100.00', total_equity: '400.00', total_assets: '1000.00' },
-      { period_end: '2026-06-30', period_type: 'Q', reported_at: '2026-07-31', src: 'provider', currency: 'USD', revenue: '500.00', gross_profit: '200.00', ebitda: '90.00', operating_income: '70.00', net_income: '50.00', operating_cf: '80.00', capex: '30', total_debt: '250.00', cash: '100.00', total_equity: '400.00', total_assets: '1000.00' },
+      { period_end: '2025-09-30', period_type: 'A', reported_at: '2025-10-31', src: 'provider', currency: 'USD', revenue: '500.00', gross_profit: '200.00', ebitda: '90.00', operating_income: '70.00', net_income: '50.00', operating_cf: '80.00', capex: '30', total_debt: '250.00', short_term_debt: '60.00', long_term_debt: '150.00', total_liabilities: '600.00', cash: '100.00', total_equity: '400.00', total_assets: '1000.00' },
+      { period_end: '2026-06-30', period_type: 'Q', reported_at: '2026-07-31', src: 'provider', currency: 'USD', revenue: '500.00', gross_profit: '200.00', ebitda: '90.00', operating_income: '70.00', net_income: '50.00', operating_cf: '80.00', capex: '30', total_debt: '250.00', short_term_debt: '60.00', long_term_debt: '150.00', total_liabilities: '600.00', cash: '100.00', total_equity: '400.00', total_assets: '1000.00' },
     ]);
   });
 
@@ -123,23 +123,43 @@ describe('FUNDAMENTALS (acciones)', () => {
     expect((await pool.query("SELECT count(*)::int AS n FROM data_quality_finding WHERE rule_code LIKE 'FUNDAMENTALS%'")).rows[0].n).toBe(0);
   });
 
-  test('misma clave: una línea antes NULL se completa en silencio; una línea ya informada y distinta se conserva y emite FUNDAMENTALS_REVISED con el old del primero', async () => {
+  test('P16, misma clave y misma filing_date: NULL -> valor en silencio; valor distinto = UPDATE + FUNDAMENTALS_REVISED solo con las columnas cambiadas y el old del primero', async () => {
     await makeStock('FFF.US');
     const q = '2026-06-30';
     await fundamentals('FFF.US', stockBody(sections({ [q]: [bs(q, '2026-07-31'), is(q, '2026-07-31', { grossProfit: null }), cf(q, '2026-07-31')] })));
     await replay();
+    // solo completa gross_profit: en silencio
+    await fundamentals('FFF.US', stockBody(sections({ [q]: [bs(q, '2026-07-31'), is(q, '2026-07-31', { grossProfit: '210.00' }), cf(q, '2026-07-31')] })));
+    let out = await replay({ all: true });
+    expect(out.fundamentals).toMatchObject({ fundamentalsInserted: 0, fundamentalsFilled: 1, fundamentalsRevised: 0 });
+    expect(await findings('FUNDAMENTALS_REVISED')).toHaveLength(0);
+    // corrige net_income (y completa nada más): UPDATE + finding
     await fundamentals('FFF.US', stockBody(sections({ [q]: [bs(q, '2026-07-31'), is(q, '2026-07-31', { grossProfit: '210.00', netIncome: '55.00' }), cf(q, '2026-07-31')] })));
-    const out = await replay({ all: true });
+    out = await replay({ all: true });
     expect(out.fundamentals).toMatchObject({ fundamentalsInserted: 0, fundamentalsRevised: 1 });
-    expect(await rows()).toEqual([expect.objectContaining({ gross_profit: '210.00', net_income: '50.00' })]); // completa gross_profit; net_income se conserva
+    expect(await rows()).toEqual([expect.objectContaining({ gross_profit: '210.00', net_income: '55.00' })]);
     let f = await findings('FUNDAMENTALS_REVISED');
     expect(f).toHaveLength(1);
     expect(f[0]).toMatchObject({ target_table: 'fundamentals', status: 'open', severity: 'warning', detail: { old: { net_income: 50 }, new: { net_income: 55 } } });
-    await fundamentals('FFF.US', stockBody(sections({ [q]: [bs(q, '2026-07-31'), is(q, '2026-07-31', { netIncome: '60.00' }), cf(q, '2026-07-31')] })));
+    expect(Object.keys(f[0]!.detail.new)).toEqual(['net_income']);
+    // otra corrección de la misma línea: el finding conserva el old del primero
+    await fundamentals('FFF.US', stockBody(sections({ [q]: [bs(q, '2026-07-31'), is(q, '2026-07-31', { grossProfit: '210.00', netIncome: '60.00' }), cf(q, '2026-07-31')] })));
     await replay({ all: true });
     f = await findings('FUNDAMENTALS_REVISED');
     expect(f).toHaveLength(1);
     expect(f[0]!.detail).toMatchObject({ old: { net_income: 50 }, new: { net_income: 60 } });
+    // una línea que llega vacía no borra el dato guardado
+    await fundamentals('FFF.US', stockBody(sections({ [q]: [bs(q, '2026-07-31'), is(q, '2026-07-31', { grossProfit: '210.00', netIncome: null }), cf(q, '2026-07-31')] })));
+    await replay({ all: true });
+    expect(await rows()).toEqual([expect.objectContaining({ net_income: '60.00' })]);
+  });
+
+  test('P14: total_debt es el del proveedor; short_term_debt y long_term_debt se guardan aparte y el total nunca se rellena con su suma', async () => {
+    await makeStock('FFD.US');
+    const q = '2026-06-30';
+    await fundamentals('FFD.US', stockBody(sections({ [q]: [bs(q, '2026-07-31', { shortLongTermDebtTotal: null }), is(q, '2026-07-31'), cf(q, '2026-07-31')] })));
+    await replay();
+    expect(await rows()).toEqual([expect.objectContaining({ total_debt: null, short_term_debt: '60.00', long_term_debt: '150.00', total_liabilities: '600.00' })]);
   });
 
   test('un restatement con filing_date posterior es una fila nueva y conserva la anterior', async () => {
@@ -173,7 +193,7 @@ describe('FUNDAMENTALS (acciones)', () => {
     expect((await findings('FUNDAMENTALS_INCOMPLETE'))[0]).toMatchObject({ target_key: { raw_payload_id: Number(id) } });
   });
 
-  test('SHARES_OUTSTANDING: una cifra distinta para la misma clave se conserva y emite FUNDAMENTALS_REVISED', async () => {
+  test('SHARES_OUTSTANDING: una cifra distinta para la misma clave se corrige (UPDATE) y emite FUNDAMENTALS_REVISED', async () => {
     await makeStock('FFI.US');
     const body = (shares: string) => stockBody({ outstandingShares: { quarterly: { 0: { date: '2026-Q2', dateFormatted: '2026-06-30', shares } } } });
     await fundamentals('FFI.US', body('1000'));
@@ -181,7 +201,7 @@ describe('FUNDAMENTALS (acciones)', () => {
     await fundamentals('FFI.US', body('1100'));
     const out = await replay({ all: true });
     expect(out.fundamentals).toMatchObject({ sharesRevised: 1 });
-    expect((await pool.query('SELECT shares::text AS shares FROM shares_outstanding')).rows).toEqual([{ shares: '1000' }]);
+    expect((await pool.query('SELECT shares::text AS shares FROM shares_outstanding')).rows).toEqual([{ shares: '1100' }]);
     expect((await findings('FUNDAMENTALS_REVISED'))[0]).toMatchObject({ target_table: 'shares_outstanding', detail: { old: { shares: '1000' }, new: { shares: '1100' } } });
   });
 
@@ -254,6 +274,19 @@ describe('ETF', () => {
       { dimension: 'sector', bucket: 'Consumer Cyclicals', w: '9.4566', source: 'provider', sector_id: null },
       { dimension: 'sector', bucket: 'Technology', w: '34.6031', source: 'provider', sector_id: null },
     ]);
+  });
+
+  test('P15: el aum solo se guarda si el listing primario cotiza en EEUU; en otra bolsa o sin bolsa no hay snapshot ni finding', async () => {
+    await makeEtf('EEL.LSE', 'XLON');
+    await makeEtf('EEM.US', null);
+    await fundamentals('EEL.LSE', etfBody({ CurrencyCode: 'GBX' }));
+    await fundamentals('EEM.US', etfBody());
+    const out = await replay();
+    expect(out).toMatchObject({ checked: 2, ok: 2, error: 0 });
+    expect(out.fundamentals).toMatchObject({ etfSnapshotInserted: 0, etfSnapshotNoCurrency: 2, discarded: 0 });
+    expect(await count('etf_snapshot')).toBe(0);
+    expect(await count('etf_holding')).toBe(4); // el resto del payload sí entra
+    expect(await findings('FUNDAMENTALS_INCOMPLETE')).toHaveLength(0);
   });
 
   test('la allocation de sector se mapea por SOURCE_SECTOR_MAP; un bucket sin mapeo queda NULL + SECTOR_UNMAPPED (una vez por ETF y bucket)', async () => {

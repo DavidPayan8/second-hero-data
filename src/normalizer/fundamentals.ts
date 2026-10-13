@@ -2,35 +2,45 @@ import type pg from 'pg';
 import { withActor } from '../db/withActor.js';
 import { PROVIDER } from '../eodhd/provider.js';
 import { emitFinding } from './findings.js';
+import { addDays, date, isObj, text, type Discarded } from './values.js';
+import { emptyEarningsCounts, writeEarnings, type EarningsCounts } from './earnings.js';
+import { emptyOwnershipCounts, writeOwnership, type OwnershipCounts } from './ownership.js';
 
 // Escritor de fundamentals/{symbol} (decisiones-modelo.md §2/§2.1, decisiones-modelo-etf.md, decisiones-modelo-taxonomia.md).
 // Una respuesta, dos formas según el tipo de activo del listing (ASSET_TYPE.requires_company):
 //  - Acción: FUNDAMENTALS (bitemporal, una fila por company, periodo, tipo y reported_at), SHARES_OUTSTANDING de la security y
-//    sector/industria de la company vía SOURCE_SECTOR_MAP (sin mapeo: NULL + SECTOR_UNMAPPED).
+//    sector/industria de la company vía SOURCE_SECTOR_MAP (sin mapeo: NULL + SECTOR_UNMAPPED), calendario de resultados (earnings.ts) y
+//    ownership, analistas, holders, insiders y short interest (ownership.ts).
 //  - ETF: ETF_PROFILE, ETF_SNAPSHOT, ETF_HOLDING y ETF_ALLOCATION de la security.
 // Como div/splits, solo cuenta el listing PRIMARIO (un payload de otro listing de la misma security se salta y se cuenta).
 // Devuelve null si el listing todavía no existe: el payload se queda pendiente. Todo es idempotente.
 
 // ----------------------------------------------------------------------------------------------------------------------
-// PROVISIONAL (propuesta P14): correspondencia de las líneas de FUNDAMENTALS con los campos de Financials. El modelo no la
-// documenta y el payload no trae `totalDebt` ni `capex`. ÚNICO sitio con esta tabla.
+// De qué campo de Financials sale cada línea de FUNDAMENTALS (decisiones-modelo.md §2.0, P14). ÚNICO sitio con esta tabla.
+// capex es positivo = salida de caja, tal cual lo da el proveedor. total_debt es el total del proveedor
+// (shortLongTermDebtTotal): NUNCA se rellena con short_term_debt + long_term_debt (no son la misma magnitud).
 // ----------------------------------------------------------------------------------------------------------------------
 export const LINE_MAP = {
   Income_Statement: { revenue: 'totalRevenue', gross_profit: 'grossProfit', ebitda: 'ebitda', operating_income: 'operatingIncome', net_income: 'netIncome' },
   Cash_Flow: { operating_cf: 'totalCashFromOperatingActivities', capex: 'capitalExpenditures' },
-  Balance_Sheet: { total_debt: 'shortLongTermDebtTotal', cash: 'cash', total_equity: 'totalStockholderEquity', total_assets: 'totalAssets' },
+  Balance_Sheet: {
+    total_debt: 'shortLongTermDebtTotal', short_term_debt: 'shortTermDebt', long_term_debt: 'longTermDebt', total_liabilities: 'totalLiab',
+    cash: 'cash', total_equity: 'totalStockholderEquity', total_assets: 'totalAssets',
+  },
 } as const;
+
+// ----------------------------------------------------------------------------------------------------------------------
+// Divisa de aum en ETF_SNAPSHOT (decisiones-modelo-etf.md §2.b, P15). TotalAssets no trae divisa. Solo si el listing PRIMARIO
+// cotiza en una bolsa de estos países (EXCHANGE.country_iso) se toma General.CurrencyCode; en el resto, aum y currency quedan
+// NULL hasta verificarlo con un ETF europeo. ÚNICO sitio.
+// ----------------------------------------------------------------------------------------------------------------------
+export const AUM_CURRENCY_COUNTRIES: readonly string[] = ['US'];
 const LINES = Object.values(LINE_MAP).flatMap((m) => Object.keys(m));
 const SECTIONS = Object.keys(LINE_MAP) as (keyof typeof LINE_MAP)[];
 
 // Sin filing_date, reported_at = period_end + este desfase, marcado 'estimated' (PLAN.md Fase 3, punto 5.4). PROVISIONAL.
 export const ESTIMATED_REPORT_LAG_DAYS = 45;
 
-const DATE = /^\d{4}-\d{2}-\d{2}$/;
-const date = (v: unknown): string | null => (typeof v === 'string' && DATE.test(v) ? v : null);
-const text = (v: unknown): string | null => (v === null || v === undefined || v === '' ? null : String(v));
-const addDays = (d: string, n: number) => new Date(Date.parse(d + 'T00:00:00Z') + n * 864e5).toISOString().slice(0, 10);
-const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
 export interface FundamentalsInput {
   rawPayloadId: string;
@@ -40,14 +50,14 @@ export interface FundamentalsInput {
   body: unknown;
 }
 
-export interface FundamentalsSummary {
+export interface FundamentalsSummary extends EarningsCounts, OwnershipCounts {
   payloads: number;
   skippedNonPrimary: number;
   periods: number;
   fundamentalsInserted: number;
   fundamentalsUnchanged: number;
   fundamentalsFilled: number; // misma clave con líneas antes NULL y ahora informadas: se completan en silencio
-  fundamentalsRevised: number; // misma clave con una línea ya informada y distinta: se conserva y se avisa
+  fundamentalsRevised: number; // misma clave con una línea ya informada y distinta: UPDATE + FUNDAMENTALS_REVISED (P16)
   sharesInserted: number;
   sharesUnchanged: number;
   sharesRevised: number;
@@ -56,6 +66,7 @@ export interface FundamentalsSummary {
   sectorUnmapped: number;
   etfProfileChanged: number;
   etfSnapshotInserted: number;
+  etfSnapshotNoCurrency: number; // aum sin divisa verificable (listing primario fuera de AUM_CURRENCY_COUNTRIES): no se guarda
   etfHoldingsInserted: number;
   etfHoldingsUnchangedSets: number;
   etfHoldingsResolved: number; // constituent_security_id completado en un snapshot ya guardado
@@ -64,19 +75,19 @@ export interface FundamentalsSummary {
 }
 export const emptyFundamentalsSummary = (): FundamentalsSummary => ({
   payloads: 0, skippedNonPrimary: 0, periods: 0, fundamentalsInserted: 0, fundamentalsUnchanged: 0, fundamentalsFilled: 0, fundamentalsRevised: 0,
-  sharesInserted: 0, sharesUnchanged: 0, sharesRevised: 0, discarded: 0, sectorMapped: 0, sectorUnmapped: 0, etfProfileChanged: 0, etfSnapshotInserted: 0,
+  sharesInserted: 0, sharesUnchanged: 0, sharesRevised: 0, discarded: 0, sectorMapped: 0, sectorUnmapped: 0, etfProfileChanged: 0, etfSnapshotInserted: 0, etfSnapshotNoCurrency: 0,
   etfHoldingsInserted: 0, etfHoldingsUnchangedSets: 0, etfHoldingsResolved: 0, etfAllocationInserted: 0, etfAllocationUnchangedSets: 0,
+  ...emptyEarningsCounts(), ...emptyOwnershipCounts(),
 });
-
-type Discarded = { reason: string; detail: unknown };
 
 export async function writeFundamentals(input: FundamentalsInput): Promise<FundamentalsSummary | null> {
   if (!isObj(input.body)) throw new Error('se esperaba un objeto');
   const body = input.body;
   return withActor('normalizer', `fundamentals desde raw_payload ${input.rawPayloadId}`, async (c) => {
-    const l = (await c.query<{ security_id: string; primary: boolean; company_id: string | null; requires_company: boolean }>(
-      `SELECT l.security_id, l.is_primary_listing AS "primary", s.company_id, a.requires_company
-       FROM listing l JOIN security s USING (security_id) JOIN asset_type a USING (asset_type_id) WHERE l.provider_symbol = $1`, [input.symbol])).rows[0];
+    const l = (await c.query<{ security_id: string; primary: boolean; company_id: string | null; requires_company: boolean; country: string | null }>(
+      `SELECT l.security_id, l.is_primary_listing AS "primary", s.company_id, a.requires_company, x.country_iso AS country
+       FROM listing l JOIN security s USING (security_id) JOIN asset_type a USING (asset_type_id) LEFT JOIN exchange x ON x.exchange_id = l.exchange_id
+       WHERE l.provider_symbol = $1`, [input.symbol])).rows[0];
     if (!l) return null;
     const s = emptyFundamentalsSummary();
     s.payloads = 1;
@@ -86,7 +97,7 @@ export async function writeFundamentals(input: FundamentalsInput): Promise<Funda
       if (!l.company_id) throw new Error(`${input.symbol}: security sin company`);
       await writeStock(c, input, body, l.security_id, l.company_id, s, discarded);
     } else {
-      await writeEtf(c, input, body, l.security_id, s, discarded);
+      await writeEtf(c, input, body, l.security_id, l.country, s, discarded);
     }
     s.discarded = discarded.length;
     if (discarded.length) {
@@ -153,6 +164,10 @@ async function writeStock(c: pg.PoolClient, input: FundamentalsInput, body: Reco
       : { period_end: end, reported_at: addDays(end, ESTIMATED_REPORT_LAG_DAYS), reported_at_source: 'estimated', shares });
   }
   if (sh.length) await upsertShares(c, input, securityId, sh, s);
+
+  // ---- calendario de resultados, ownership, analistas y short interest: bloques del mismo payload, por security
+  await writeEarnings(c, securityId, body.Earnings, s, discarded);
+  await writeOwnership(c, securityId, body, input.fetchedDate, s, discarded);
 }
 
 async function mapSector(c: pg.PoolClient, input: FundamentalsInput, companyId: string, sector: string | null, industry: string | null, s: FundamentalsSummary) {
@@ -180,7 +195,8 @@ async function upsertFundamentals(c: pg.PoolClient, input: FundamentalsInput, co
      ON CONFLICT (company_id, period_end, period_type, reported_at) DO NOTHING`, args);
   s.fundamentalsInserted += ins.rowCount ?? 0;
 
-  // Misma clave ya guardada: línea NULL + ahora informada = se completa; línea informada y distinta = se conserva y se avisa.
+  // Misma clave ya guardada (misma filing_date), P16: línea NULL + ahora informada = se completa en silencio; línea informada y distinta =
+  // corrección del proveedor: UPDATE + FUNDAMENTALS_REVISED (solo columnas cambiadas, old del primero). Una línea que llega vacía no borra el dato.
   const conflict = (x: string) => `(f.${x} IS NOT NULL AND i.${x} IS NOT NULL AND f.${x} <> i.${x})`;
   const fill = (x: string) => `(f.${x} IS NULL AND i.${x} IS NOT NULL)`;
   const diff = await c.query<{ id: string; f: Record<string, unknown>; i: Record<string, unknown>; changed: string[] }>(
@@ -193,9 +209,9 @@ async function upsertFundamentals(c: pg.PoolClient, input: FundamentalsInput, co
   const filled = diff.rows.filter((r) => r.changed.length === 0).length;
   if (diff.rowCount) {
     await c.query(
-      `UPDATE fundamentals f SET ${LINES.map((x) => `${x} = COALESCE(f.${x}, i.${x})`).join(', ')}
+      `UPDATE fundamentals f SET currency = i.currency, ${LINES.map((x) => `${x} = COALESCE(i.${x}, f.${x})`).join(', ')}
        FROM ${rec} WHERE f.company_id = $1::bigint AND f.period_end = i.period_end AND f.period_type = i.period_type AND f.reported_at = i.reported_at
-         AND (${LINES.map(fill).join(' OR ')})`, args);
+         AND (${['currency', ...LINES].map(conflict).join(' OR ')} OR ${LINES.map(fill).join(' OR ')})`, args);
   }
   for (const r of diff.rows) {
     if (!r.changed.length) continue;
@@ -220,6 +236,11 @@ async function upsertShares(c: pg.PoolClient, input: FundamentalsInput, security
     `SELECT t.shares_outstanding_id AS id, t.shares::text AS old, i.shares::text AS new
      FROM ${rec} JOIN shares_outstanding t ON t.security_id = $1::bigint AND t.period_end = i.period_end AND t.reported_at = i.reported_at
      WHERE t.shares <> i.shares`, args);
+  if (diff.rowCount) {
+    await c.query(
+      `UPDATE shares_outstanding t SET shares = i.shares FROM ${rec}
+       WHERE t.security_id = $1::bigint AND t.period_end = i.period_end AND t.reported_at = i.reported_at AND t.shares <> i.shares`, args);
+  }
   for (const r of diff.rows) {
     await emitFinding(c, {
       ruleCode: 'FUNDAMENTALS_REVISED', targetTable: 'shares_outstanding', targetKey: { shares_outstanding_id: Number(r.id) },
@@ -233,7 +254,7 @@ async function upsertShares(c: pg.PoolClient, input: FundamentalsInput, security
 
 // ---------------------------------------------------------------------------------------------------------------- ETF
 
-async function writeEtf(c: pg.PoolClient, input: FundamentalsInput, body: Record<string, unknown>, securityId: string, s: FundamentalsSummary, discarded: Discarded[]) {
+async function writeEtf(c: pg.PoolClient, input: FundamentalsInput, body: Record<string, unknown>, securityId: string, country: string | null, s: FundamentalsSummary, discarded: Discarded[]) {
   const general = isObj(body.General) ? body.General : {};
   const etf = isObj(body.ETF_Data) ? body.ETF_Data : null;
   if (!etf) { discarded.push({ reason: 'sin bloque ETF_Data', detail: null }); return; }
@@ -255,10 +276,12 @@ async function writeEtf(c: pg.PoolClient, input: FundamentalsInput, body: Record
     [securityId, text(etf.Company_Name), inception, text(etf.Index_Name), text(general.Category), text(etf.Domicile), expense]);
   s.etfProfileChanged = p.rowCount ?? 0;
 
-  // ---- ETF_SNAPSHOT: TotalAssets no trae fecha ni divisa; as_of_date = día de captura y divisa = General.CurrencyCode (P15, provisional)
+  // ---- ETF_SNAPSHOT: TotalAssets no trae fecha ni divisa; as_of_date = día de captura. La divisa (General.CurrencyCode) solo se da
+  // por buena si el listing primario cotiza en AUM_CURRENCY_COUNTRIES (P15); fuera, aum y currency NULL: no hay fila (limitación del proveedor, sin finding).
   const aum = text(etf.TotalAssets), currency = text(general.CurrencyCode);
   if (aum !== null) {
-    if (!currency) discarded.push({ reason: 'TotalAssets sin divisa (General.CurrencyCode ausente)', detail: { TotalAssets: aum} });
+    if (!country || !AUM_CURRENCY_COUNTRIES.includes(country)) s.etfSnapshotNoCurrency = 1;
+    else if (!currency) discarded.push({ reason: 'TotalAssets sin divisa (General.CurrencyCode ausente)', detail: { TotalAssets: aum } });
     else {
       const last = (await c.query<{ same: boolean }>(
         `SELECT (aum, nav, currency, shares_outstanding_etf) IS NOT DISTINCT FROM ($2::numeric, NULL::numeric, $3::text, NULL::numeric) AS same

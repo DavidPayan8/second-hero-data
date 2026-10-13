@@ -3,6 +3,7 @@ import { pool } from '../db/pool.js';
 import { writeListings, type ListingsInput, type ListingsSummary, type SymbolRecord } from '../normalizer/listings.js';
 import { writeDividends, writeSplits, type DividendRecord, type EventsSummary, type SplitRecord } from '../normalizer/events.js';
 import { writeFundamentals, type FundamentalsSummary } from '../normalizer/fundamentals.js';
+import { writeNews, type NewsSummary } from '../normalizer/news.js';
 import { isFxSymbol, writeFx, type FxRecord, type FxSummary } from '../normalizer/fx.js';
 import { emptyPricesSummary, parseJsonExact, writePrices, type EodRecord, type PricesSummary } from '../normalizer/prices.js';
 
@@ -18,6 +19,7 @@ export interface ReplaySummary {
   splits?: EventsSummary;
   fx?: FxSummary;
   fundamentals?: FundamentalsSummary;
+  news?: NewsSummary;
 }
 
 // Contadores de EVENTOS (lo que una pasada cambia) frente a contadores de ESTADO (lo que una pasada ve).
@@ -35,7 +37,9 @@ interface Row { id: string; run_id: string; endpoint: string; provider_symbol: s
 //   2. eod/{symbol}               -> precios brutos (src/normalizer/prices.ts), cuando el listing ya existe; si el símbolo es
 //                                    un cruce EURxxx.FOREX va a FX_RATES (src/normalizer/fx.ts), que no depende de ningún listing.
 //   3. div/{symbol}, splits/{symbol} -> DIVIDEND y STOCK_SPLIT (src/normalizer/events.ts), cuando el listing ya existe.
-//   4. fundamentals/{symbol}      -> FUNDAMENTALS, SHARES_OUTSTANDING y sector (acciones) o ETF_* (src/normalizer/fundamentals.ts).
+//   4. fundamentals/{symbol}      -> FUNDAMENTALS, SHARES_OUTSTANDING, sector, earnings, ownership, analistas, holders, insiders y short
+//                                    interest (acciones) o ETF_* (src/normalizer/{fundamentals,earnings,ownership}.ts).
+//   5. news                       -> NEWS y NEWS_SECURITY (src/normalizer/news.ts), cuando los listings ya existen.
 // Los demás endpoints solo se comprueban hasta que tengan escritor.
 //   ok       : respuesta 2xx, hash que coincide, JSON válido (un BOM inicial se tolera al decodificar) y escritor sin error.
 //   error    : cuerpo purgado, hash que no coincide, HTTP no 2xx, JSON inválido o fallo del escritor (se revierte su transacción).
@@ -62,6 +66,7 @@ export async function replay(options: { runId?: string; all?: boolean; maxSweeps
   const priceItems: { row: Row; records: EodRecord[] }[] = [];
   const eventItems: { row: Row; kind: 'div' | 'splits'; records: unknown[] }[] = [];
   const fundamentalsItems: { row: Row; body: unknown }[] = [];
+  const newsItems: { row: Row; body: unknown }[] = [];
 
   const mark = async (row: Row, problem: string | null) => {
     await pool.query('UPDATE raw_payload SET parse_status = $2, parse_error = $3 WHERE raw_payload_id = $1', [row.id, problem ? 'error' : 'ok', problem]);
@@ -113,6 +118,11 @@ export async function replay(options: { runId?: string; all?: boolean; maxSweeps
     if (!problem && row.endpoint === 'fundamentals/{symbol}') {
       if (!row.provider_symbol) problem = 'escritor de fundamentals: la fila no tiene provider_symbol';
       else { fundamentalsItems.push({ row, body: parsed }); continue; }
+    }
+
+    if (!problem && row.endpoint === 'news') {
+      if (!Array.isArray(parsed)) problem = 'escritor de noticias: se esperaba una lista';
+      else { newsItems.push({ row, body: parsed }); continue; }
     }
 
     await mark(row, problem);
@@ -178,6 +188,17 @@ export async function replay(options: { runId?: string; all?: boolean; maxSweeps
       summary.fundamentals = addCounts2(summary.fundamentals, s);
     } catch (e) {
       problem = `escritor de fundamentals: ${(e as Error).message}`;
+    }
+    await mark(row, problem);
+  }
+
+  // Noticias: al final, para enlazar con los listings que ya existen.
+  for (const { row, body } of newsItems) {
+    let problem: string | null = null;
+    try {
+      summary.news = addCounts2(summary.news, await writeNews({ rawPayloadId: row.id, body }));
+    } catch (e) {
+      problem = `escritor de noticias: ${(e as Error).message}`;
     }
     await mark(row, problem);
   }

@@ -35,6 +35,7 @@ try {
     if (s.splits) console.log('Splits:', JSON.stringify(s.splits));
     if (s.fx) console.log('FX:', JSON.stringify(s.fx));
     if (s.fundamentals) console.log('Fundamentals:', JSON.stringify(s.fundamentals));
+    if (s.news) console.log('Noticias:', JSON.stringify(s.news));
     if (s.listings) console.log(`Listings (${s.listingsSweeps} pasada${s.listingsSweeps === 1 ? '' : 's'}):`, JSON.stringify(s.listings));
   } else {
     console.log('Uso:\n  npm run capture -- --scope=symbols:LSE [--symbols=AAPL.US,...] [--budget=N] [--demo] [--go]   (sin --go es dry-run; --demo usa la clave pública demo)\n  npm run replay [-- --run=ID] [--all]   (--all vuelve a pasar también lo ya marcado)');
