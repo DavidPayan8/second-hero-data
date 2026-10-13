@@ -83,8 +83,10 @@ erDiagram
     numeric operating_income
     numeric net_income
     numeric operating_cf
-    numeric capex
-    numeric total_debt
+    numeric capex "positivo = salida de caja"
+    numeric total_debt "shortLongTermDebtTotal del proveedor"
+    numeric short_term_debt "nullable"
+    numeric long_term_debt "nullable"
     numeric cash
     numeric total_equity
     numeric total_assets

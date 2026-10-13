@@ -50,6 +50,22 @@ Los estados financieros absolutos (ingresos, beneficio neto, EBITDA, deuda, fond
 - **EPS, P/E, capitalización y todo per-share → derivados**, no almacenados en el modelo normalizado. Se materializan solo en el snapshot.
 - **`fundamentals_source_security_id` (auto-FK) → ELIMINADO.** No hacía falta: el "compartir fundamentales entre clases" ocurre naturalmente porque ambas securities apuntan a la misma company.
 
+### 2.0 De qué campo del proveedor sale cada línea (P14, 2026-10-13)
+
+Verificado con `fundamentals` real de AAPL, TSLA y AMZN (453 periodos). La correspondencia vive en **un único sitio del código** (`LINE_MAP`) y es la oficial mientras no se vea un caso que la contradiga:
+
+| Columna | Campo EODHD | Nota |
+|---|---|---|
+| `revenue`, `gross_profit`, `ebitda`, `operating_income`, `net_income` | `Income_Statement`: `totalRevenue`, `grossProfit`, `ebitda`, `operatingIncome`, `netIncome` | |
+| `operating_cf` | `Cash_Flow.totalCashFromOperatingActivities` | |
+| `capex` | `Cash_Flow.capitalExpenditures` | **Positivo = salida de caja**, tal cual lo da EODHD (453 de 453 periodos positivos). VISTAS resta: FCF = `operating_cf` − `capex`. |
+| `total_debt` | `Balance_Sheet.shortLongTermDebtTotal` | El total **que da el proveedor**, ya agregado en origen. Vacío en 76 de 453 periodos → NULL. |
+| `short_term_debt`, `long_term_debt` | `Balance_Sheet.shortTermDebt`, `longTermDebt` | **Columnas nuevas.** Son primitivos del proveedor y cubren 50 de los periodos en que falta el total. |
+| `cash` | `Balance_Sheet.cash` | Vacío en 16 → NULL. `cashAndShortTermInvestments` es otra magnitud: no se usa como sustituto. |
+| `total_equity`, `total_assets` | `Balance_Sheet.totalStockholderEquity`, `totalAssets` | |
+
+- **El escritor no rellena `total_debt` con `short_term_debt + long_term_debt`.** No son la misma magnitud: con los tres informados, la suma no coincide con el total en más de 150 periodos (el total del proveedor incluye otras partidas). Rellenar mezclaría dos definiciones en la misma serie. Si VISTAS quiere un respaldo cuando falta el total, lo decide y lo marca allí.
+
 **Frontera empresa/clase:** COMPANY guarda los estados absolutos; SECURITY guarda las acciones de su clase; el per-share se calcula cruzando ambos (EPS = beneficio ÷ acciones de esa clase).
 
 **Regla de materializador — reconciliación de divisa:** todo ratio que cruce una magnitud de FUNDAMENTALS (o de DIVIDEND) con una de precio debe **convertir divisas primero, con el fx de la fecha correcta**. P/E = precio (`quote_currency`) ÷ EPS (derivado de `net_income` en `FUNDAMENTALS.currency`): si difieren, se reconcilia antes de dividir. Aplica igual al dividendo (usa su propia `DIVIDEND.currency`, no la del listing).
@@ -63,6 +79,8 @@ Requisito cerrado al inicio (trazabilidad, evitar look-ahead bias). `period_end`
 - **Reconstrucción "qué sabía el screener el día D":** la fila con `reported_at <= D` más reciente para ese `(company_id, period_end, period_type)`.
 - **Dos ejes independientes:** `period_end` (periodo que cubre) y `reported_at` (cuándo se conoció). Tabla **bitemporal** — patrón distinto de "snapshot-temporal" (ver `decisiones-modelo-ownership.md` §1): aquí sí hay restatement real.
 - **`SHARES_OUTSTANDING`:** mismo patrón por consistencia (prioridad menor).
+- **`reported_at` cuando los tres estados de un periodo traen `filing_date` distintas:** se usa la **más tardía**, con `reported_at_source = 'provider'`. Así la fila no se usa antes de estar completa.
+- **Valores distintos para una clave ya guardada (misma `filing_date`) (P16, 2026-10-13):** se **acepta la corrección** (UPDATE) y se emite `FUNDAMENTALS_REVISED` (`detail` con solo las columnas cambiadas, `old`/`new`, conservando el `old` del primero). Una línea antes NULL que ahora llega informada se completa **en silencio**. Por qué no conservar lo guardado: la fila representa *esa presentación* (`filing_date`); si el proveedor corrige cómo la leyó, la lectura corregida es la verdad de esa misma presentación, y un backtest debe verla en su fecha original. Por qué no fila nueva con el día de captura: `reported_at` es cuándo lo supo el mercado, no cuándo lo vimos nosotros, y mezclar los dos ejes rompe el point-in-time. Un **restatement real** llega con `filing_date` posterior → fila nueva, sin finding. Misma lógica que precios (§5, P13) y eventos corporativos (§5.5).
 
 **Procedencia de la fecha — `reported_at_source`.** Un booleano "¿estimado?" se queda corto; la pregunta al depurar es "¿de dónde salió?". Dominio cerrado (`TEXT + CHECK`, no `ENUM` nativo — añadir un valor futuro es un `ALTER` de constraint, no alterar un tipo):
 

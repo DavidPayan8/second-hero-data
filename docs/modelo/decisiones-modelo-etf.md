@@ -54,6 +54,7 @@ Cuatro tablas nuevas, todas colgando de SECURITY. Ninguna toca el núcleo salvo 
 
 - Campos: `as_of_date` (día en que lo **observamos**), `aum` (`TotalAssets`, nullable), `nav` (nullable, por si un proveedor futuro lo da), `currency` (obligatoria si hay `aum` o `nav`: `CHECK`), `shares_outstanding_etf` (nullable).
 - PK natural `(security_id, as_of_date)`. **Deduplicación por valor**: no se inserta una fila igual a la última de ese ETF.
+- **Divisa de `aum` (P15, 2026-10-13):** `TotalAssets` no trae divisa. Para ETF **cotizados en bolsas de EEUU** se toma `General.CurrencyCode` (fondos de EEUU en USD; VTI: USD). Para el resto, **`aum` y `currency` quedan NULL** hasta verificarlo con el payload de un ETF europeo: una línea de Londres en GBX de un fondo en USD guardaría el patrimonio con la unidad equivocada (×100 y otra divisa), y eso es peor que no tenerlo. Decisión provisional, en un único sitio del código.
 - **Consecuencia de producto:** sin NAV no hay **prima/descuento sobre NAV**. Esa métrica queda fuera de v1 mientras el proveedor no dé NAV para ETFs.
 - Las acciones del ETF (creation/redemption) siguen aquí y **no** en `SHARES_OUTSTANDING` bitemporal (no se restatean).
 

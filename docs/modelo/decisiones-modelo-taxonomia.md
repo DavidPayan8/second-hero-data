@@ -52,6 +52,26 @@ Un registro `unclassified` en la dimensión canónica contaminaría una tabla de
 
 ---
 
+## 4.b Borrador de la taxonomía (D3) — **pendiente de aprobación de David**
+
+Propuesta 2026-10-13. Nombres y códigos propios; once sectores y 38 industrias, con cobertura completa para que toda empresa clasificable caiga en alguna industria (una industria NULL debe significar "no sabemos", no "no tiene caso especial"). Las tres industrias que el score trata aparte quedan aisladas: `banking`, `insurance`, `reits`.
+
+| Sector (`code` — nombre) | Industrias (`code` — nombre) |
+|---|---|
+| `energy` — Energía | `oil_gas` — Petróleo y gas · `energy_services` — Servicios energéticos y transporte · `coal_other_fuels` — Carbón y otros combustibles |
+| `materials` — Materiales | `chemicals` — Química · `metals_mining` — Metales y minería · `construction_materials` — Materiales de construcción · `packaging_paper` — Envases, papel y madera |
+| `industrials` — Industria | `aerospace_defense` — Aeroespacial y defensa · `machinery_equipment` — Maquinaria y equipos · `construction_engineering` — Construcción e ingeniería · `transport_logistics` — Transporte y logística · `business_services` — Servicios a empresas |
+| `consumer_cyclical` — Consumo cíclico | `autos` — Automoción · `retail` — Distribución minorista · `travel_leisure` — Viajes, ocio y restauración · `apparel_durables` — Moda, lujo y bienes duraderos |
+| `consumer_staples` — Consumo básico | `food_beverage_tobacco` — Alimentación, bebidas y tabaco · `household_personal` — Hogar y cuidado personal · `staples_retail` — Supermercados y distribución básica |
+| `health_care` — Salud | `pharma_biotech` — Farmacia y biotecnología · `medical_devices` — Tecnología y equipos médicos · `health_services` — Servicios sanitarios |
+| `financials` — Finanzas | `banking` — Banca · `insurance` — Seguros · `capital_markets` — Mercados de capitales y gestión de activos · `specialty_finance` — Financiación especializada |
+| `real_estate` — Inmobiliario | `reits` — REITs / SOCIMIs · `real_estate_operating` — Promoción y gestión inmobiliaria |
+| `technology` — Tecnología | `software` — Software · `hardware_devices` — Hardware y dispositivos · `semiconductors` — Semiconductores · `it_services` — Servicios TI |
+| `communication` — Comunicaciones | `telecom` — Telecomunicaciones · `media_entertainment` — Medios y entretenimiento · `internet_platforms` — Internet y plataformas |
+| `utilities` — Servicios públicos | `electric_utilities` — Eléctricas · `gas_water_multi` — Gas, agua y multiservicios · `renewable_power` — Generación renovable |
+
+**Lo que no se decide aquí:** el mapa `SOURCE_SECTOR_MAP` (qué etiqueta del proveedor va a cada fila) necesita la lista real de etiquetas del universo, que solo da el plan de pago. Allí se decide también qué vocabulario del payload alimenta el mapa para las acciones: `Sector`/`Industry` o `GicSector`/`GicIndustry` (los dos vienen en EEUU; falta ver si `Gic*` viene en Europa y Canadá). Las etiquetas de `ETF_Data.Sector_Weights` (grafía propia, p. ej. `Consumer Cyclicals`) van al mismo mapa, solo a nivel de sector.
+
 ## 5. Mapeo: `SOURCE_SECTOR_MAP`
 
 `SOURCE_SECTOR_MAP (provider, provider_sector_label, provider_industry_label) → (sector_id, industry_id)`.
