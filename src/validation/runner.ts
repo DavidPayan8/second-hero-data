@@ -8,8 +8,10 @@ import { secSecondSource } from './secSecondSource.js';
 // enabled = true que tienen lógica aquí (indexada por rule_code) y emite con su severidad efectiva (default_severity del catálogo).
 // Corre DESPUÉS del normalizador, nunca rechaza ni borra: solo produce findings (y transiciona reported_at_source a cross_checked).
 // Las reglas que emite el normalizador (IDENTITY_*, SECTOR_UNMAPPED, VENUE_UNMAPPED, ...) están catalogadas pero no tienen lógica
-// en el runner. Cada regla va en su transacción: un fallo de una no revierte a las demás.
-export interface RuleContext { c: pg.PoolClient; today: string; severity: string }
+// en el runner. Esas dos clases deciden el cierre: las de estado (con lógica aquí) cierran solas en una pasada completa; las de evento
+// (normalizador) solo las cierra una persona. Cada regla va en su transacción: un fallo de una no revierte a las demás.
+// full = pasada completa de la regla (sin --rules): solo entonces puede cerrar los findings que ya no se cumplen.
+export interface RuleContext { c: pg.PoolClient; today: string; severity: string; full: boolean }
 type RuleImpl = (ctx: RuleContext) => Promise<EmitCounts>;
 
 export const RULE_IMPLS: Record<string, RuleImpl> = {
@@ -38,7 +40,7 @@ export async function runValidation(options: { today?: string; only?: string[] }
     if (!rule.enabled) { summary.disabled.push(rule.rule_code); continue; }
     if (options.only && !options.only.includes(rule.rule_code)) continue;
     try {
-      summary.ran[rule.rule_code] = await withActor('validator', `validación ${rule.rule_code}`, (c) => impl({ c, today, severity: rule.default_severity })) as EmitCounts & Record<string, number>;
+      summary.ran[rule.rule_code] = await withActor('validator', `validación ${rule.rule_code}`, (c) => impl({ c, today, severity: rule.default_severity, full: !options.only })) as EmitCounts & Record<string, number>;
     } catch (e) {
       summary.failed[rule.rule_code] = (e as Error).message;
     }

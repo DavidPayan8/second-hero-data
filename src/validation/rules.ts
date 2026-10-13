@@ -25,10 +25,10 @@ export async function currencyCoherence(ctx: RuleContext): Promise<EmitCounts> {
        FROM need n WHERE cardinality(n.differing) > 0)
      SELECT 'listing'::text AS target_table, jsonb_build_object('listing_id', listing_id) AS target_key,
             jsonb_build_object('quote_currency', quote_currency, 'reporting_currencies', to_jsonb(reporting), 'without_fx_rates', to_jsonb(absent)) AS detail
-     FROM missing WHERE cardinality(absent) > 0`, [BASE_CURRENCY]);
+     FROM missing WHERE cardinality(absent) > 0`, [BASE_CURRENCY], closeTables(ctx, 'listing'));
 }
 
-// YOY_JUMP: ingresos o acciones en circulación con una variación de más del yoyJumpRatio frente al mismo periodo del año anterior
+// YOY_JUMP: (solo periodos con period_end en los últimos yoyRecentYears años) ingresos o acciones en circulación con una variación de más del yoyJumpRatio frente al mismo periodo del año anterior
 // (versión más reciente de cada periodo; misma divisa; periodo anterior = el más cercano a un año antes dentro de la ventana).
 // Objetivo: la fila del periodo actual. Un anterior en 0 no se compara.
 export async function yoyJump(ctx: RuleContext): Promise<EmitCounts> {
@@ -44,8 +44,8 @@ export async function yoyJump(ctx: RuleContext): Promise<EmitCounts> {
        WHERE p.company_id = cur.company_id AND p.period_type = cur.period_type AND p.currency = cur.currency
          AND p.period_end BETWEEN (cur.period_end - interval '1 year')::date - $4::int AND (cur.period_end - interval '1 year')::date + $4::int
        ORDER BY abs(p.period_end - (cur.period_end - interval '1 year')::date), p.period_end LIMIT 1) prev ON true
-     WHERE cur.revenue IS NOT NULL AND prev.revenue IS NOT NULL AND prev.revenue <> 0 AND abs(cur.revenue - prev.revenue) / abs(prev.revenue) > $3::numeric`,
-    [CFG.yoyJumpRatio, CFG.yoyPeriodWindowDays]);
+     WHERE cur.period_end >= $5::date - make_interval(years => $6::int) AND cur.revenue IS NOT NULL AND prev.revenue IS NOT NULL AND prev.revenue <> 0 AND abs(cur.revenue - prev.revenue) / abs(prev.revenue) > $3::numeric`,
+    [CFG.yoyJumpRatio, CFG.yoyPeriodWindowDays, ctx.today, CFG.yoyRecentYears], closeTables(ctx, 'fundamentals'));
   const shares = await emitCandidates(ctx.c, 'YOY_JUMP', ctx.severity,
     `WITH latest AS (
        SELECT DISTINCT ON (security_id, period_end) shares_outstanding_id, security_id, period_end, shares
@@ -58,8 +58,8 @@ export async function yoyJump(ctx: RuleContext): Promise<EmitCounts> {
        WHERE p.security_id = cur.security_id
          AND p.period_end BETWEEN (cur.period_end - interval '1 year')::date - $4::int AND (cur.period_end - interval '1 year')::date + $4::int
        ORDER BY abs(p.period_end - (cur.period_end - interval '1 year')::date), p.period_end LIMIT 1) prev ON true
-     WHERE prev.shares <> 0 AND abs(cur.shares - prev.shares) / abs(prev.shares) > $3::numeric`,
-    [CFG.yoyJumpRatio, CFG.yoyPeriodWindowDays]);
+     WHERE cur.period_end >= $5::date - make_interval(years => $6::int) AND prev.shares <> 0 AND abs(cur.shares - prev.shares) / abs(prev.shares) > $3::numeric`,
+    [CFG.yoyJumpRatio, CFG.yoyPeriodWindowDays, ctx.today, CFG.yoyRecentYears], closeTables(ctx, 'shares_outstanding'));
   return sum(revenue, shares);
 }
 
@@ -83,9 +83,12 @@ export async function staleness(ctx: RuleContext): Promise<EmitCounts> {
      SELECT 'security'::text AS target_table, jsonb_build_object('security_id', security_id) AS target_key,
             jsonb_strip_nulls(jsonb_build_object('last_fundamentals', fundamentals, 'last_price', price)) AS detail
      FROM stale WHERE fundamentals IS NOT NULL OR price IS NOT NULL`,
-    [ctx.today, CFG.stalenessFundamentalsDays, CFG.stalenessPriceBusinessDays]);
+    [ctx.today, CFG.stalenessFundamentalsDays, CFG.stalenessPriceBusinessDays], closeTables(ctx, 'security'));
 }
 
+// Solo una pasada completa de la regla cierra los findings que ya no se cumplen (decisiones-modelo-validacion.md 7).
+export const closeTables = (ctx: RuleContext, ...tables: string[]): string[] | undefined => (ctx.full ? tables : undefined);
+
 function sum(a: EmitCounts, b: EmitCounts): EmitCounts {
-  return { candidates: a.candidates + b.candidates, inserted: a.inserted + b.inserted, updated: a.updated + b.updated, unchanged: a.unchanged + b.unchanged, suppressed: a.suppressed + b.suppressed };
+  return { closed: a.closed + b.closed, candidates: a.candidates + b.candidates, inserted: a.inserted + b.inserted, updated: a.updated + b.updated, unchanged: a.unchanged + b.unchanged, suppressed: a.suppressed + b.suppressed };
 }

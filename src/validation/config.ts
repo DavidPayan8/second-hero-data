@@ -9,6 +9,9 @@ export const VALIDATION_CONFIG = {
   yoyJumpRatio: 2,
   // Desfase admitido, en días, al buscar el periodo del año anterior (los cierres fiscales de 52/53 semanas se mueven unos días).
   yoyPeriodWindowDays: 15,
+  // YOY_JUMP: solo se evalúan periodos con period_end en los últimos N años (lo que el screener enseña). Antes, el aviso no se emite
+  // y el runner cierra el que hubiera abierto (decisiones-modelo-validacion.md 7).
+  yoyRecentYears: 3,
   // STALENESS: último reported_at de FUNDAMENTALS (días naturales) y último precio (días hábiles = lunes a viernes; sin calendario de festivos).
   stalenessFundamentalsDays: 200,
   stalenessPriceBusinessDays: 5,

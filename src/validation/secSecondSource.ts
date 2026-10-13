@@ -1,7 +1,7 @@
 import { SEC_ENDPOINT, SEC_PROVIDER, cik10 } from '../sec/client.js';
 import { SEC_METRICS, findFact, withinTolerance, type SecMetric } from '../sec/facts.js';
 import { VALIDATION_CONFIG as CFG } from './config.js';
-import { emitCandidates, type EmitCounts } from './emit.js';
+import { RUNNER_ACTOR, emitCandidates, type EmitCounts } from './emit.js';
 import type { RuleContext } from './runner.js';
 
 // SECOND_SOURCE_MISMATCH: cruza ingresos, beneficio neto y activo total de FUNDAMENTALS con los companyfacts de la SEC (empresas
@@ -24,7 +24,7 @@ export async function secSecondSource(ctx: RuleContext): Promise<SecCounts> {
      WHERE c.cik IS NOT NULL AND f.currency = 'USD' AND f.reported_at_source IN ('provider', 'cross_checked')
        AND f.reported_at = (SELECT max(g.reported_at) FROM fundamentals g WHERE g.company_id = f.company_id AND g.period_end = f.period_end AND g.period_type = f.period_type)
      ORDER BY c.cik, f.period_end, f.period_type`)).rows;
-  const out: SecCounts = { candidates: 0, inserted: 0, updated: 0, unchanged: 0, suppressed: 0, rows: rows.length, compared: 0, crossChecked: 0, mismatched: 0, noPayload: 0, noFacts: 0 };
+  const out: SecCounts = { candidates: 0, inserted: 0, updated: 0, unchanged: 0, suppressed: 0, closed: 0, rows: rows.length, compared: 0, crossChecked: 0, mismatched: 0, noPayload: 0, noFacts: 0 };
   if (!rows.length) return out;
 
   // Último payload correcto de cada CIK que tiene filas, leído una sola vez.
@@ -40,6 +40,7 @@ export async function secSecondSource(ctx: RuleContext): Promise<SecCounts> {
   }
 
   const ok: string[] = [];
+  const cleared: string[] = []; // filas comparadas y dentro de tolerancia (provider o cross_checked): su finding abierto ya no se cumple
   const bad: { fundamentals_id: string; detail: unknown }[] = [];
   for (const row of rows) {
     const body = bodies.get(cik10(row.cik));
@@ -59,7 +60,10 @@ export async function secSecondSource(ctx: RuleContext): Promise<SecCounts> {
     if (!comparedMetrics) { out.noFacts++; continue; }
     out.compared++;
     if (mismatches.length) { out.mismatched++; bad.push({ fundamentals_id: row.fundamentals_id, detail: { period_end: row.period_end, period_type: row.period_type, tolerance: CFG.secTolerance, mismatches } }); }
-    else if (row.source === 'provider') ok.push(row.fundamentals_id);
+    else {
+      cleared.push(row.fundamentals_id);
+      if (row.source === 'provider') ok.push(row.fundamentals_id);
+    }
   }
 
   if (ok.length) {
@@ -71,6 +75,13 @@ export async function secSecondSource(ctx: RuleContext): Promise<SecCounts> {
     ? await emitCandidates(ctx.c, 'SECOND_SOURCE_MISMATCH', ctx.severity,
         `SELECT 'fundamentals'::text AS target_table, jsonb_build_object('fundamentals_id', f.fundamentals_id) AS target_key, i.detail
          FROM jsonb_to_recordset($3::jsonb) AS i(fundamentals_id bigint, detail jsonb) JOIN fundamentals f USING (fundamentals_id)`, [JSON.stringify(bad)])
-    : { candidates: 0, inserted: 0, updated: 0, unchanged: 0, suppressed: 0 };
-  return { ...out, ...e };
+    : { candidates: 0, inserted: 0, updated: 0, unchanged: 0, suppressed: 0, closed: 0 };
+  // Cierre automático solo sobre lo evaluado: una fila sin payload o sin hechos comparables no se toca.
+  let closed = 0;
+  if (ctx.full && cleared.length) {
+    closed = (await ctx.c.query(
+      `UPDATE data_quality_finding SET status = 'dismissed', resolved_by = '${RUNNER_ACTOR}', resolved_at = now()
+       WHERE rule_code = 'SECOND_SOURCE_MISMATCH' AND status = 'open' AND target_table = 'fundamentals' AND (target_key->>'fundamentals_id')::bigint = ANY($1::bigint[])`, [cleared])).rowCount ?? 0;
+  }
+  return { ...out, ...e, closed };
 }

@@ -187,6 +187,19 @@ describe('SECOND_SOURCE_MISMATCH', () => {
     expect((await run()).ran.SECOND_SOURCE_MISMATCH).toMatchObject({ suppressed: 1, inserted: 0 });
   });
 
+  test('el dato se corrige y ahora cuadra: la pasada parcial deja el finding abierto; la completa lo cierra como dismissed por el runner', async () => {
+    const co = await makeCompany('0000000104');
+    const a = await fund(co, '2025-09-27', 'A', { revenue: '480', net_income: '100', total_assets: '1000' });
+    await storeFacts('0000000104', body({ Revenues: [annual('2025-09-27', 400)], NetIncomeLoss: [annual('2025-09-27', 100)], Assets: [instant('2025-09-27', 1000)] }));
+    await run();
+    expect((await findings())[0]).toMatchObject({ status: 'open' });
+    await pool.query('UPDATE fundamentals SET revenue = 400 WHERE fundamentals_id = $1', [a]);
+    expect((await run()).ran.SECOND_SOURCE_MISMATCH).toMatchObject({ closed: 0, crossChecked: 1 });
+    expect((await findings())[0]).toMatchObject({ status: 'open' });
+    expect((await runValidation({ today: '2026-10-13' })).ran.SECOND_SOURCE_MISMATCH).toMatchObject({ closed: 1 });
+    expect((await pool.query("SELECT status, resolved_by FROM data_quality_finding WHERE rule_code = 'SECOND_SOURCE_MISMATCH'")).rows).toEqual([{ status: 'dismissed', resolved_by: 'runner' }]);
+  });
+
   test('una cifra fuera de tolerancia basta para no marcar la fila, aunque las demás cuadren; una magnitud sin dato en la SEC se ignora', async () => {
     const co = await makeCompany('0000000103');
     const a = await fund(co, '2025-09-27', 'A', { revenue: '400', net_income: '100', total_assets: '1200' });

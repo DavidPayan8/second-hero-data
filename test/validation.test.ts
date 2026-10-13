@@ -209,3 +209,69 @@ describe('STALENESS', () => {
     expect((await runValidation({ today: '2026-10-19', only: ['STALENESS'] })).ran.STALENESS).toMatchObject({ candidates: 1 }); // lunes 19: 6 hábiles
   });
 });
+
+describe('cierre automático de findings de estado', () => {
+  const price = (listing: string, d: string) => pool.query('INSERT INTO prices_daily (listing_id, date, close) VALUES ($1, $2, 10)', [listing, d]);
+  const closedByRunner = async (rule: string) => (await pool.query("SELECT finding_id FROM data_quality_finding WHERE rule_code = $1 AND status = 'dismissed' AND resolved_by = 'runner' AND resolved_at IS NOT NULL", [rule])).rows;
+
+  test('STALENESS que se corrige con datos nuevos: una pasada completa la cierra como dismissed por el runner; una parcial no cierra nada', async () => {
+    const { listing } = await makeStock();
+    await price(listing, '2026-09-01');
+    await runValidation({ today: '2026-10-13', only: ['STALENESS'] });
+    expect(await findings('STALENESS', 'open')).toHaveLength(1);
+    await price(listing, '2026-10-12'); // datos nuevos: ya no está obsoleto
+    const partial = await runValidation({ today: '2026-10-13', only: ['STALENESS'] });
+    expect(partial.ran.STALENESS).toMatchObject({ closed: 0 });
+    expect(await findings('STALENESS', 'open')).toHaveLength(1);
+    const full = await runValidation({ today: '2026-10-13' });
+    expect(full.ran.STALENESS).toMatchObject({ closed: 1 });
+    expect(await findings('STALENESS', 'open')).toHaveLength(0);
+    expect(await closedByRunner('STALENESS')).toHaveLength(1);
+    // idempotente: otra pasada completa no cierra nada más
+    expect((await runValidation({ today: '2026-10-13' })).ran.STALENESS).toMatchObject({ closed: 0 });
+  });
+
+  test('si la condición vuelve a cumplirse con el mismo detail, el cierre del runner no la suprime: finding nuevo (uno cerrado por una persona sí suprime)', async () => {
+    const { company } = await makeStock({ quote: 'USD' });
+    await fund(company, '2026-06-30', 'Q', '100', { currency: 'TWD' });
+    await pool.query("INSERT INTO fx_rates (currency, date, units_per_base) VALUES ('USD', '2026-10-09', 1.1)");
+    await runValidation({ today: '2026-10-13' });
+    expect(await findings('CURRENCY_COHERENCE', 'open')).toHaveLength(1);
+    await pool.query("INSERT INTO fx_rates (currency, date, units_per_base) VALUES ('TWD', '2026-10-09', 30)");
+    await runValidation({ today: '2026-10-13' });
+    expect(await findings('CURRENCY_COHERENCE', 'open')).toHaveLength(0);
+    await pool.query("DELETE FROM fx_rates WHERE currency = 'TWD'");
+    await runValidation({ today: '2026-10-13' });
+    expect((await findings('CURRENCY_COHERENCE')).map((f) => f.status)).toEqual(['dismissed', 'open']);
+    // lo cierra una persona y el estado sigue igual: no se re-emite
+    await pool.query("UPDATE data_quality_finding SET status = 'accepted', resolved_at = now(), resolved_by = 'david' WHERE status = 'open'");
+    await runValidation({ today: '2026-10-13' });
+    expect(await findings('CURRENCY_COHERENCE', 'open')).toHaveLength(0);
+  });
+
+  test('un finding de evento del normalizador (CORPORATE_EVENT_CHANGED) nunca se cierra solo, ni en pasada completa', async () => {
+    const { listing } = await makeStock();
+    await pool.query("INSERT INTO data_quality_finding (rule_code, severity, target_table, target_key, detail) VALUES ('CORPORATE_EVENT_CHANGED', 'warning', 'listing', jsonb_build_object('listing_id', $1::bigint), '{}')", [listing]);
+    await runValidation({ today: '2026-10-13' });
+    await runValidation({ today: '2026-10-13' });
+    expect(await findings('CORPORATE_EVENT_CHANGED', 'open')).toHaveLength(1);
+  });
+
+  test('YOY_JUMP solo mira periodos de los últimos 3 años: uno antiguo no se emite y el abierto que hubiera lo cierra el runner', async () => {
+    const { company } = await makeStock();
+    await fund(company, '2019-06-30', 'Q', '100');
+    await fund(company, '2020-06-30', 'Q', '900'); // salto real pero fuera de alcance
+    await fund(company, '2025-06-30', 'Q', '100');
+    await fund(company, '2026-06-30', 'Q', '900'); // dentro de alcance
+    // un aviso antiguo que ya estaba abierto (de antes de acotar la regla)
+    const old = (await pool.query<{ id: string }>("SELECT fundamentals_id AS id FROM fundamentals WHERE period_end = '2020-06-30'")).rows[0]!.id;
+    await pool.query(
+      "INSERT INTO data_quality_finding (rule_code, severity, target_table, target_key, detail) VALUES ('YOY_JUMP', 'warning', 'fundamentals', jsonb_build_object('fundamentals_id', $1::bigint), jsonb_build_object('metric', 'revenue'))", [old]);
+    const s = await runValidation({ today: '2026-10-13' });
+    expect(s.ran.YOY_JUMP).toMatchObject({ candidates: 1, inserted: 1, closed: 1 });
+    const open = await findings('YOY_JUMP', 'open');
+    expect(open).toHaveLength(1);
+    expect(open[0]!.detail).toMatchObject({ period_end: '2026-06-30' });
+    expect(await closedByRunner('YOY_JUMP')).toHaveLength(1);
+  });
+});
