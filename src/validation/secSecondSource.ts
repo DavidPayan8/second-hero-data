@@ -1,5 +1,5 @@
 import { SEC_ENDPOINT, SEC_PROVIDER, cik10 } from '../sec/client.js';
-import { SEC_METRICS, findFacts, withinTolerance, type SecMetric } from '../sec/facts.js';
+import { ATTRIBUTABLE_NET_INCOME_TAG, SEC_METRICS, findFacts, withinTolerance, type SecMetric } from '../sec/facts.js';
 import { VALIDATION_CONFIG as CFG } from './config.js';
 import { RUNNER_ACTOR, emitCandidates, type EmitCounts } from './emit.js';
 import type { RuleContext } from './runner.js';
@@ -15,11 +15,11 @@ import type { RuleContext } from './runner.js';
 // Se evalúa la versión más reciente de cada periodo y solo filas con fuente 'provider' o 'cross_checked'.
 export interface SecCounts extends EmitCounts { rows: number; compared: number; crossChecked: number; mismatched: number; noPayload: number; noFacts: number }
 
-interface Row { fundamentals_id: string; cik: string; period_end: string; period_type: 'A' | 'Q'; source: string; revenue: string | null; net_income: string | null; total_assets: string | null }
+interface Row { fundamentals_id: string; cik: string; period_end: string; reported_at: string; period_type: 'A' | 'Q'; source: string; revenue: string | null; net_income: string | null; total_assets: string | null }
 
 export async function secSecondSource(ctx: RuleContext): Promise<SecCounts> {
   const rows = (await ctx.c.query<Row>(
-    `SELECT f.fundamentals_id::text, c.cik, f.period_end::text, f.period_type, f.reported_at_source AS source, f.revenue::text, f.net_income::text, f.total_assets::text
+    `SELECT f.fundamentals_id::text, c.cik, f.period_end::text, f.reported_at::date::text AS reported_at, f.period_type, f.reported_at_source AS source, f.revenue::text, f.net_income::text, f.total_assets::text
      FROM fundamentals f JOIN company c ON c.company_id = f.company_id
      WHERE c.cik IS NOT NULL AND f.currency = 'USD' AND f.reported_at_source IN ('provider', 'cross_checked')
        AND f.reported_at = (SELECT max(g.reported_at) FROM fundamentals g WHERE g.company_id = f.company_id AND g.period_end = f.period_end AND g.period_type = f.period_type)
@@ -50,20 +50,22 @@ export async function secSecondSource(ctx: RuleContext): Promise<SecCounts> {
     for (const metric of SEC_METRICS) {
       const mine = row[metric as SecMetric];
       if (mine === null) continue;
-      const facts = findFacts(body, metric, row.period_end, row.period_type, CFG.secPeriodWindowDays);
-      const fact = facts[0];
-      if (!fact) continue;
+      const facts = findFacts(body, metric, row.period_end, row.period_type, CFG.secPeriodWindowDays, row.reported_at);
+      // Ingresos y activo: basta con coincidir con cualquiera de sus etiquetas. Beneficio: solo cuenta el atribuible a la matriz; sin
+      // él en la SEC no hay con qué comparar (el consolidado solo sirve para clasificar el mismatch como 'consolidated').
+      const counting = metric === 'net_income' ? facts.filter((x) => x.tag === ATTRIBUTABLE_NET_INCOME_TAG) : facts;
+      const shown = counting[0];
+      if (!shown) continue;
       comparedMetrics++;
-      // Coincidir con cualquiera de las etiquetas de la magnitud basta (p. ej. beneficio atribuible o consolidado). Si ninguna, el
-      // finding lleva la preferida y, si las hay, las demás.
-      if (!facts.some((x) => withinTolerance(mine, x.value, CFG.secTolerance))) {
-        mismatches.push({ metric, provider: mine, sec: fact.value, sec_tag: fact.tag, sec_end: fact.end, sec_form: fact.form, sec_filed: fact.filed, sec_accn: fact.accn,
-          ...(facts.length > 1 ? { sec_other_tags: facts.slice(1).map((x) => ({ tag: x.tag, value: x.value })) } : {}) });
-      }
+      if (counting.some((x) => withinTolerance(mine, x.value, CFG.secTolerance))) continue;
+      const consolidated = metric === 'net_income' && facts.some((x) => x.tag !== ATTRIBUTABLE_NET_INCOME_TAG && withinTolerance(mine, x.value, CFG.secTolerance));
+      const others = facts.filter((x) => x !== shown);
+      mismatches.push({ metric, kind: consolidated ? 'consolidated' : 'value', provider: mine, sec: shown.value, sec_tag: shown.tag, sec_end: shown.end, sec_form: shown.form, sec_filed: shown.filed, sec_accn: shown.accn,
+        ...(others.length ? { sec_other_tags: others.map((x) => ({ tag: x.tag, value: x.value })) } : {}) });
     }
     if (!comparedMetrics) { out.noFacts++; continue; }
     out.compared++;
-    if (mismatches.length) { out.mismatched++; bad.push({ fundamentals_id: row.fundamentals_id, detail: { period_end: row.period_end, period_type: row.period_type, tolerance: CFG.secTolerance, mismatches } }); }
+    if (mismatches.length) { out.mismatched++; bad.push({ fundamentals_id: row.fundamentals_id, detail: { kind: mismatches.every((m) => (m as { kind: string }).kind === 'consolidated') ? 'consolidated' : 'value', period_end: row.period_end, period_type: row.period_type, tolerance: CFG.secTolerance, mismatches } }); }
     else {
       cleared.push(row.fundamentals_id);
       if (row.source === 'provider') ok.push(row.fundamentals_id);

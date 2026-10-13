@@ -178,8 +178,8 @@ describe('SECOND_SOURCE_MISMATCH', () => {
     expect((await run()).ran.SECOND_SOURCE_MISMATCH).toMatchObject({ compared: 1, mismatched: 1, crossChecked: 0, inserted: 1 });
     expect((await row(a)).src).toBe('provider');
     expect(await findings()).toEqual([{ target_key: { fundamentals_id: Number(a) }, severity: 'warning', status: 'open', detail: {
-      period_end: '2025-09-27', period_type: 'A', tolerance: 0.005,
-      mismatches: [{ metric: 'revenue', provider: '480', sec: '400', sec_tag: 'Revenues', sec_end: '2025-09-27', sec_form: '10-K', sec_filed: '2025-10-30', sec_accn: '0000000102-25-000009' }] } }]);
+      kind: 'value', period_end: '2025-09-27', period_type: 'A', tolerance: 0.005,
+      mismatches: [{ metric: 'revenue', kind: 'value', provider: '480', sec: '400', sec_tag: 'Revenues', sec_end: '2025-09-27', sec_form: '10-K', sec_filed: '2025-10-30', sec_accn: '0000000102-25-000009' }] } }]);
     expect((await run()).ran.SECOND_SOURCE_MISMATCH).toMatchObject({ mismatched: 1, inserted: 0, updated: 0, unchanged: 1 });
     expect(await findings()).toHaveLength(1);
     // aceptado: no se re-emite mientras el detail sea el mismo
@@ -212,19 +212,53 @@ describe('SECOND_SOURCE_MISMATCH', () => {
     expect((await row(far)).src).toBe('provider');
   });
 
-  test('el beneficio coincide con cualquiera de sus etiquetas (atribuible NetIncomeLoss o consolidado ProfitLoss); con ninguna, finding con la preferida y las otras', async () => {
+  test('beneficio: solo cuenta el atribuible (NetIncomeLoss); si la fila coincide solo con el consolidado (ProfitLoss) es un mismatch kind "consolidated" y no cross_checked', async () => {
     const co = await makeCompany('0000000106');
-    const consolidated = await fund(co, '2025-09-27', 'A', { net_income: '105' });
-    const neither = await fund(co, '2024-09-27', 'A', { net_income: '200' });
+    const attributable = await fund(co, '2025-09-27', 'A', { net_income: '100' });
+    const consolidated = await fund(co, '2024-09-27', 'A', { net_income: '110' });
+    const neither = await fund(co, '2023-09-27', 'A', { net_income: '200' });
     await storeFacts('0000000106', body({
-      NetIncomeLoss: [annual('2025-09-27', 100), annual('2024-09-27', 100, { start: '2023-10-01' })],
-      ProfitLoss: [annual('2025-09-27', 105), annual('2024-09-27', 110, { start: '2023-10-01' })],
+      NetIncomeLoss: [annual('2025-09-27', 100), annual('2024-09-27', 100, { start: '2023-10-01' }), annual('2023-09-27', 100, { start: '2022-10-01' })],
+      ProfitLoss: [annual('2025-09-27', 105), annual('2024-09-27', 110, { start: '2023-10-01' }), annual('2023-09-27', 110, { start: '2022-10-01' })],
     }));
     await run();
-    expect((await row(consolidated)).src).toBe('cross_checked');
+    expect((await row(attributable)).src).toBe('cross_checked');
+    expect((await row(consolidated)).src).toBe('provider');
     expect((await row(neither)).src).toBe('provider');
-    expect(await findings()).toHaveLength(1);
-    expect((await findings())[0]!.detail.mismatches[0]).toMatchObject({ metric: 'net_income', sec_tag: 'NetIncomeLoss', sec: '100', sec_other_tags: [{ tag: 'ProfitLoss', value: '110' }] });
+    const f = await findings();
+    expect(f).toHaveLength(2);
+    const byId = (id: string) => f.find((x) => x.target_key.fundamentals_id === Number(id))!;
+    expect(byId(consolidated).detail).toMatchObject({ kind: 'consolidated', mismatches: [{ metric: 'net_income', kind: 'consolidated', provider: '110', sec_tag: 'NetIncomeLoss', sec: '100', sec_other_tags: [{ tag: 'ProfitLoss', value: '110' }] }] });
+    expect(byId(neither).detail).toMatchObject({ kind: 'value', mismatches: [{ kind: 'value' }] });
+    // validar otra vez: ni duplicados ni cambios
+    expect((await run()).ran.SECOND_SOURCE_MISMATCH).toMatchObject({ inserted: 0, updated: 0, unchanged: 2 });
+    expect(await findings()).toHaveLength(2);
+  });
+
+  test('beneficio: si la SEC solo trae el consolidado no hay con qué comparar y la fila no se marca', async () => {
+    const co = await makeCompany('0000000107');
+    const a = await fund(co, '2025-09-27', 'A', { net_income: '105' });
+    await storeFacts('0000000107', body({ ProfitLoss: [annual('2025-09-27', 105)] }));
+    expect((await run()).ran.SECOND_SOURCE_MISMATCH).toMatchObject({ compared: 0, noFacts: 1, crossChecked: 0 });
+    expect((await row(a)).src).toBe('provider');
+    expect(await findings()).toHaveLength(0);
+  });
+
+  test('se compara con la presentación cuyo filed está más cerca del reported_at de la fila (la original), no con la reexpresada más reciente', async () => {
+    const co = await makeCompany('0000000108');
+    const a = await fund(co, '2025-09-27', 'A', { total_assets: '1000' }, { reportedAt: '2025-10-31' });
+    await storeFacts('0000000108', body({ Assets: [
+      instant('2025-09-27', 1000, { accn: 'original', filed: '2025-10-30' }),
+      instant('2025-09-27', 900, { accn: 'reexpresada', form: '10-K', filed: '2027-10-29' }), // 10-K posterior con la cifra reexpresada
+    ] }));
+    expect((await run()).ran.SECOND_SOURCE_MISMATCH).toMatchObject({ compared: 1, crossChecked: 1, mismatched: 0 });
+    expect((await row(a)).src).toBe('cross_checked');
+    // la fila de una versión posterior (reported_at cerca de la reexpresión) se compara con la reexpresada
+    const b = await fund(co, '2025-09-27', 'A', { total_assets: '1000' }, { reportedAt: '2027-10-30' });
+    await run();
+    expect((await findings())).toHaveLength(1);
+    expect((await findings())[0]!.detail.mismatches[0]).toMatchObject({ sec: '900', sec_accn: 'reexpresada' });
+    expect((await row(b)).src).toBe('provider');
   });
 
   test('una cifra fuera de tolerancia basta para no marcar la fila, aunque las demás cuadren; una magnitud sin dato en la SEC se ignora', async () => {

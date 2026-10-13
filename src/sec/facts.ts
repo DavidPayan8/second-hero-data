@@ -11,7 +11,8 @@
 //  - ingresos: AAPL usa SalesRevenueNet hasta 2018 y RevenueFromContractWithCustomerExcludingAssessedTax después (Revenues solo 2016-2018);
 //    AMZN, igual (SalesRevenueNet hasta 2018); TSLA usa Revenues (todo el histórico) y la de ASC 606 desde 2018.
 //  - beneficio: NetIncomeLoss (atribuible a la matriz) en las tres; TSLA además ProfitLoss (consolidado, con participación no
-//    controladora). El proveedor da a veces uno y a veces el otro: la fila cuadra si coincide con cualquiera de las etiquetas.
+//    controladora). El proveedor da a veces uno y a veces el otro: solo NetIncomeLoss cuenta para cross_checked; coincidir solo con
+//    ProfitLoss es un SECOND_SOURCE_MISMATCH con kind 'consolidated'.
 //  - activo: Assets en las tres.
 // ----------------------------------------------------------------------------------------------------------------------
 export const SEC_TAGS = {
@@ -36,9 +37,10 @@ const days = (a: string, b: string) => Math.round((Date.parse(b + 'T00:00:00Z') 
 
 // Los datos de una magnitud para un cierre y un tipo de periodo, uno por etiqueta (en orden de preferencia): entradas en USD con
 // ese `end` (o a menos de windowDays de él: EODHD da el fin de mes y la SEC el cierre real de los ejercicios de 52/53 semanas), el
-// formulario del tipo y, en las de periodo, la duración esperada. Si una etiqueta tiene varias (la misma cifra repetida en
-// formularios posteriores o reexpresada), el cierre más cercano y, a igualdad, la presentada más tarde.
-export function findFacts(body: unknown, metric: SecMetric, periodEnd: string, periodType: 'A' | 'Q', windowDays = 0): SecFact[] {
+// formulario del tipo y, en las de periodo, la duración esperada. Si una etiqueta tiene varias (la misma cifra repetida o reexpresada en
+// informes posteriores), el cierre más cercano y, a igualdad, la presentación cuyo `filed` esté más cerca de `reportedAt` (la fecha de
+// la fila: es la presentación original, no la reexpresada; decisiones-modelo-validacion.md 7). Sin `reportedAt`, la presentada más tarde.
+export function findFacts(body: unknown, metric: SecMetric, periodEnd: string, periodType: 'A' | 'Q', windowDays = 0, reportedAt?: string): SecFact[] {
   const gaap = isObj(body) && isObj(body.facts) && isObj(body.facts['us-gaap']) ? body.facts['us-gaap'] : null;
   if (!gaap) return [];
   const out: SecFact[] = [];
@@ -57,7 +59,8 @@ export function findFacts(body: unknown, metric: SecMetric, periodEnd: string, p
         if (d < DURATION_DAYS[periodType][0] || d > DURATION_DAYS[periodType][1]) continue;
       }
       const filed = typeof e.filed === 'string' ? e.filed : '';
-      if (!best || gap < bestGap || (gap === bestGap && filed > best.filed)) {
+      const closer = reportedAt && best && filed && best.filed ? Math.abs(days(filed, reportedAt)) < Math.abs(days(best.filed, reportedAt)) : filed > (best?.filed ?? '');
+      if (!best || gap < bestGap || (gap === bestGap && closer)) {
         best = { metric, tag, value: String(e.val), end: e.end, form: String(e.form), filed, accn: typeof e.accn === 'string' ? e.accn : null };
         bestGap = gap;
       }
@@ -68,8 +71,12 @@ export function findFacts(body: unknown, metric: SecMetric, periodEnd: string, p
 }
 
 // Para ingresos de un tag preferido y respaldo: el primero con dato. Atajo de findFacts.
-export const findFact = (body: unknown, metric: SecMetric, periodEnd: string, periodType: 'A' | 'Q', windowDays = 0): SecFact | null =>
-  findFacts(body, metric, periodEnd, periodType, windowDays)[0] ?? null;
+export const findFact = (body: unknown, metric: SecMetric, periodEnd: string, periodType: 'A' | 'Q', windowDays = 0, reportedAt?: string): SecFact | null =>
+  findFacts(body, metric, periodEnd, periodType, windowDays, reportedAt)[0] ?? null;
+
+// El beneficio neto que cuenta es el atribuible a la matriz (alimenta el BPA); el consolidado (ProfitLoss) solo sirve para decir que
+// el proveedor trae esa otra definición (decisiones-modelo-validacion.md 7).
+export const ATTRIBUTABLE_NET_INCOME_TAG = 'NetIncomeLoss';
 
 // |proveedor - SEC| <= tolerancia * |SEC|. Con SEC = 0 solo vale el 0 exacto.
 export function withinTolerance(provider: string, sec: string, tolerance: number): boolean {
