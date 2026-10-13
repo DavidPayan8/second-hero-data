@@ -2,6 +2,7 @@ import { config } from './config.js';
 import { closePool } from './db/pool.js';
 import { capture } from './eodhd/ingest.js';
 import { buildJobs } from './eodhd/jobs.js';
+import { keepPrimaryListings } from './eodhd/universe.js';
 import { replay } from './eodhd/replay.js';
 
 const [cmd, ...args] = process.argv.slice(2);
@@ -12,7 +13,9 @@ try {
     const scope = flag('scope');
     if (!scope) throw new Error('Falta --scope=...');
     const symbols = (flag('symbols') ?? '').split(',').map((s) => s.trim()).filter(Boolean);
-    const jobs = buildJobs(scope, symbols);
+    const filtered = await keepPrimaryListings(buildJobs(scope, symbols));
+    const jobs = filtered.jobs;
+    for (const k of filtered.skipped) console.log(`  [omitido] ${k.endpoint} ${k.symbol}: ${k.reason}`);
     const budget = Number(flag('budget') ?? config.runBudget);
     const cost = jobs.reduce((n, j) => n + j.cost, 0);
     console.log(`Scope ${scope}: ${jobs.length} llamadas, coste ${cost}, tope de la corrida ${budget}.`);
@@ -31,6 +34,7 @@ try {
     if (s.dividends) console.log('Dividendos:', JSON.stringify(s.dividends));
     if (s.splits) console.log('Splits:', JSON.stringify(s.splits));
     if (s.fx) console.log('FX:', JSON.stringify(s.fx));
+    if (s.fundamentals) console.log('Fundamentals:', JSON.stringify(s.fundamentals));
     if (s.listings) console.log(`Listings (${s.listingsSweeps} pasada${s.listingsSweeps === 1 ? '' : 's'}):`, JSON.stringify(s.listings));
   } else {
     console.log('Uso:\n  npm run capture -- --scope=symbols:LSE [--symbols=AAPL.US,...] [--budget=N] [--demo] [--go]   (sin --go es dry-run; --demo usa la clave pública demo)\n  npm run replay [-- --run=ID] [--all]   (--all vuelve a pasar también lo ya marcado)');

@@ -35,12 +35,16 @@ const splits = (symbol: string, rows: unknown) => addPayload('splits/{symbol}', 
 const d = (date: string, unadjustedValue: number | string | null, over: Record<string, unknown> = {}) =>
   ({ date, declarationDate: null, recordDate: date, paymentDate: null, period: 'Quarterly', value: 0.01, unadjustedValue, currency: 'USD', ...over });
 
-async function makeListing(providerSymbol: string) {
-  const sec = (await pool.query<{ id: string }>("INSERT INTO security (company_id, asset_type_id) VALUES (NULL, (SELECT asset_type_id FROM asset_type WHERE code = 'etf')) RETURNING security_id AS id")).rows[0]!.id;
+async function makeListing(providerSymbol: string, security?: string) {
+  const sec = security ?? await newSecurity();
   await pool.query(
-    "INSERT INTO listing (security_id, ticker, provider_symbol, quote_currency, status, is_primary_listing) VALUES ($1, $2, $3, 'USD', 'active', true)",
-    [sec, providerSymbol.split('.')[0], providerSymbol],
+    "INSERT INTO listing (security_id, ticker, provider_symbol, quote_currency, status, is_primary_listing) VALUES ($1, $2, $3, 'USD', 'active', $4)",
+    [sec, providerSymbol.split('.')[0], providerSymbol, security === undefined],
   );
+  return sec;
+}
+async function newSecurity() {
+  const sec = (await pool.query<{ id: string }>("INSERT INTO security (company_id, asset_type_id) VALUES (NULL, (SELECT asset_type_id FROM asset_type WHERE code = 'etf')) RETURNING security_id AS id")).rows[0]!.id;
   return sec;
 }
 const dividends = async () => (await pool.query('SELECT ex_date::text AS ex_date, declaration_date::text AS declaration_date, record_date::text AS record_date, payment_date::text AS payment_date, period, amount_native::text AS amount, currency FROM dividend ORDER BY ex_date')).rows;
@@ -145,6 +149,12 @@ describe('escritor de dividendos', () => {
     const out = await replay();
     expect(out.dividends).toMatchObject({ rows: 5, inserted: 1, skippedNoValue: 3, skippedBadDate: 1 });
     expect(await dividends()).toEqual([expect.objectContaining({ ex_date: '2026-05-05', amount: '0.7' })]);
+    const f = await findings('CORPORATE_EVENT_INCOMPLETE');
+    expect(f).toHaveLength(1);
+    expect(f[0]).toMatchObject({ target_table: 'raw_payload', severity: 'warning', status: 'open' });
+    expect(f[0]!.detail.rows.map((x: { reason: string }) => x.reason)).toEqual(['fecha inválida', 'sin unadjustedValue', 'sin currency', 'sin currency']);
+    await replay({ all: true });
+    expect(await findings('CORPORATE_EVENT_INCOMPLETE')).toHaveLength(1); // no se duplica
   });
 
   test('sin listing el payload sigue pendiente y se escribe en el siguiente replay', async () => {
@@ -161,6 +171,23 @@ describe('escritor de dividendos', () => {
     const id = await div('OBJ.US', { message: 'x' });
     expect(await replay()).toMatchObject({ checked: 1, error: 1 });
     expect((await pool.query('SELECT parse_error FROM raw_payload WHERE raw_payload_id = $1', [id])).rows[0].parse_error).toMatch(/lista/);
+  });
+});
+
+describe('solo el listing primario', () => {
+  test('el payload de un listing no primario de la misma security se marca ok y se salta, contando; no escribe ni emite nada', async () => {
+    const sec = await makeListing('PRI.US');
+    await makeListing('0PRI.LSE', sec); // misma security, no primario
+    await div('0PRI.LSE', [d('2026-01-05', 0.5)]);
+    await splits('0PRI.LSE', [{ date: '2020-08-31', split: '2/1' }]);
+    const out = await replay();
+    expect(out).toMatchObject({ checked: 2, ok: 2, error: 0, deferred: 0 });
+    expect(out.dividends).toMatchObject({ payloads: 1, inserted: 0, skippedNonPrimary: 1 });
+    expect(out.splits).toMatchObject({ payloads: 1, inserted: 0, skippedNonPrimary: 1 });
+    expect(await count('dividend')).toBe(0);
+    expect(await count('stock_split')).toBe(0);
+    await div('PRI.US', [d('2026-01-05', 0.5)]); // el primario sí escribe
+    expect((await replay()).dividends).toMatchObject({ inserted: 1, skippedNonPrimary: 0 });
   });
 });
 
@@ -214,8 +241,14 @@ describe('escritor de splits', () => {
       { date: '2003-03-03', split: 'raro' }, { date: '2004-04-04', split: '0/1' }, { date: 'x', split: '2/1' },
     ]);
     const out = await replay();
-    expect(out.splits).toMatchObject({ rows: 7, inserted: 1, skippedConflict: 2, skippedNoValue: 2, skippedBadDate: 1 });
+    expect(out.splits).toMatchObject({ rows: 7, inserted: 1, skippedSameExDate: 2, skippedNoValue: 2, skippedBadDate: 1 });
     expect(await splitRows()).toEqual([{ ex_date: '2001-01-01', n: '2', d: '1' }]);
+    const same = await findings('SPLIT_SAME_EX_DATE');
+    expect(same).toHaveLength(1);
+    expect(same[0]).toMatchObject({ target_table: 'raw_payload', severity: 'warning', status: 'open', detail: { provider_symbol: 'SPD.US', dates: [{ ex_date: '2002-02-02', rows: [{ split: '2/1' }, { split: '3/1' }] }] } });
+    const inc = await findings('CORPORATE_EVENT_INCOMPLETE');
+    expect(inc).toHaveLength(1);
+    expect(inc[0]!.detail.rows.map((x: { reason: string }) => x.reason)).toEqual(['ratio ilegible', 'ratio ilegible', 'fecha inválida']);
   });
 
   test('sin listing el payload sigue pendiente', async () => {

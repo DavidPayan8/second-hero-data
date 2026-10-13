@@ -1,5 +1,6 @@
 import { withActor } from '../db/withActor.js';
 import { emitFinding } from './findings.js';
+import { RECENT_SESSIONS } from './revisions.js';
 
 // ------------------------------------------------------------------------------------------------------------------
 // JSON con los números como TEXTO EXACTO. JSON.parse convertiría 214.2300 en 214.23 y un entero grande en un double; el
@@ -43,16 +44,13 @@ export interface PricesSummary {
 
 export const emptyPricesSummary = (): PricesSummary => ({ payloads: 0, rows: 0, inserted: 0, unchanged: 0, revised: 0, settled: 0, skippedNoClose: 0, skippedBadDate: 0, skippedDuplicate: 0, noListing: 0 });
 
-// P13 (decisiones-modelo.md §5): un cambio SOLO de volume en las últimas N sesiones del listing es el asentamiento normal del
-// volumen consolidado y se acepta en silencio. N = 5 es provisional y vive solo aquí.
-export const VOLUME_SETTLE_SESSIONS = 5;
 
 const num = (v: unknown): string | null => (v === null || v === undefined || v === '' ? null : String(v));
 
 // Escritor de precios brutos (eod/{symbol} -> PRICES_DAILY). Solo open, high, low, close y volume en la unidad del proveedor, sin
 // tocar (la divisa es LISTING.quote_currency; GBX se queda en GBX). "Inmutable" significa que nosotros no reescribimos el bruto;
 // el proveedor sí puede corregirlo (P13, D9 sustituida): una revisión se ACEPTA (UPDATE de la fila).
-//  - Cambia solo volume y la fecha está entre las VOLUME_SETTLE_SESSIONS últimas sesiones del listing: en silencio.
+//  - Cambia solo volume y la fecha está entre las RECENT_SESSIONS últimas sesiones del listing: en silencio.
 //  - Cambia open/high/low/close, o volume fuera de esa ventana: UPDATE + PRICE_REVISED {old, new}; si ya hay uno abierto se
 //    conserva el `old` del primero.
 // Idempotente: repetirlo no cambia nada. Devuelve null si el listing todavía no existe: el payload se queda pendiente.
@@ -91,7 +89,7 @@ export async function writePrices(input: PricesInput): Promise<PricesSummary | n
               jsonb_build_object('open', p.open, 'high', p.high, 'low', p.low, 'close', p.close, 'volume', p.volume) AS old,
               jsonb_build_object('open', i.open, 'high', i.high, 'low', i.low, 'close', i.close, 'volume', i.volume) AS new,
               (p.open, p.high, p.low, p.close) IS NOT DISTINCT FROM (i.open, i.high, i.low, i.close) AS only_volume,
-              p.date IN (SELECT date FROM prices_daily WHERE listing_id = $1::bigint ORDER BY date DESC LIMIT ${VOLUME_SETTLE_SESSIONS}) AS recent
+              p.date IN (SELECT date FROM prices_daily WHERE listing_id = $1::bigint ORDER BY date DESC LIMIT ${RECENT_SESSIONS}) AS recent
        FROM ${incoming} JOIN prices_daily p ON p.listing_id = $1::bigint AND p.date = i.date
        WHERE (p.open, p.high, p.low, p.close, p.volume) IS DISTINCT FROM (i.open, i.high, i.low, i.close, i.volume)
        ORDER BY i.date`, args);

@@ -121,6 +121,7 @@ Especificación: `docs/modelo/modelo-general.md` y cada par de chunk. Migracione
 | `011_transversal` | DIMENSION_AUDIT, VALIDATION_RULE, DATA_QUALITY_FINDING | auditoría, validación |
 | `012_triggers` | ver abajo | etf, taxonomía, auditoría |
 | `013_clave_jsonb_findings` | (cambio sobre DIMENSION_AUDIT y DATA_QUALITY_FINDING: `row_key` / `target_key` jsonb; T4 en las 13 dimensiones; `app.op = 'merge'`; un solo finding abierto por regla y objetivo) | `decisiones-modelo-auditoria.md` §3-§5, `decisiones-modelo-validacion.md` §6 |
+| `014_fx_units_per_base` | (cambio sobre FX_RATES: `rate_to_base` -> `units_per_base`, la cotización `EURxxx` tal cual; convertir a EUR = dividir) | divisas |
 
 Total: **36 tablas**.
 
@@ -177,7 +178,7 @@ Especificación: `decisiones-modelo-ingesta.md`, `-referencia`, `-identidad`, `-
    3. Dividendos: `unadjustedValue` → `amount_native`, con su divisa.
    4. Fundamentales: una fila por periodo y tipo; `reported_at` = fecha real de publicación si C3 la confirma (`provider`), si no `period_end + 45 días` (`estimated`); `currency` de los estados.
    5. Acciones en circulación, earnings.
-   6. FX: `rate_to_base` = valor de 1 unidad en EUR (USD = 1/EURUSD). GBX es fila propia con GBP/100 dentro del tipo.
+   6. FX: `units_per_base` = cotización `EURxxx` del proveedor tal cual (unidades de la divisa por 1 EUR; convertir a EUR = dividir). GBX es fila propia = `units_per_base` de GBP × 100 (`src/fx/subunits.ts`). Sin filas de EUR.
    7. ETF: perfil, NAV, holdings (constituyente resuelto por ISIN), allocation.
    8. Ownership, analistas, short interest, insiders, holders (`SOURCE_HOLDER_MAP`). Noticias (fuera de la fuente de verdad): upsert de `news` por `url`; `news_security` se puebla resolviendo símbolo EODHD -> `LISTING` -> `SECURITY` por el mismo crosswalk que el resto, solo **crece** (nunca se borra) y lo que no resuelve se **ignora sin finding** (`modelo-noticias.md` decisión 7).
 
@@ -247,8 +248,10 @@ Huecos detectados al planificar que el diseño no resuelve todavía. Se implemen
 | D7 | Código de regla para un símbolo en alcance sin `Currency` en `exchange-symbol-list` (no existía ninguno). | `QUOTE_CURRENCY_MISSING`, categoría `structural`, severidad `warning`; un finding por payload (objetivo: la fila de `raw_payload`) con el recuento y una muestra ordenada de símbolos. |
 | D8 | Código de regla para un listing `delisted` que vuelve a aparecer en la lista de activos (no se reactiva solo). | `LISTING_REAPPEARED`, categoría `structural`, severidad `warning`; objetivo: el listing. Solo se emite si la lista de activos es posterior a la última de deslistados de esa bolsa; una lista de activos más vieja no avisa. |
 | D9 | ~~Qué hacer cuando el proveedor trae para una fecha un precio bruto distinto del ya guardado.~~ **Sustituida** (P13, 2026-10-13, `decisiones-modelo.md` §5). | Una revisión del proveedor se **acepta** (UPDATE). Solo `volume` y fecha entre las 5 últimas sesiones del listing: en silencio. Cualquier cambio de `open`/`high`/`low`/`close`, o de `volume` fuera de la ventana: UPDATE + `PRICE_REVISED` (`{old, new}`, objetivo `{listing_id, date}`; con uno abierto se conserva el `old` del primero). N = 5 provisional en `VOLUME_SETTLE_SESSIONS`. |
-| D10 | Qué hacer cuando el proveedor trae para una fecha de `FX_RATES` un tipo distinto del ya guardado (el modelo no lo define). | Provisional: se **acepta** (UPDATE) en silencio y se cuenta en el resumen (`revised`); sin finding. Motivo: el último cierre diario de un cruce se mueve durante el día. Pendiente de confirmar con David. |
-| D11 | Qué hacer con un evento corporativo que el proveedor devuelve para una `security` desde varios listings (p. ej. `div/AAPL.US` y `div/0R2V.LSE`). | Provisional: cada payload escribe sobre la security de su listing, sin filtrar por primario. Si dos listings de la misma security discrepan en importe o divisa, el evento oscilaría y emitiría `CORPORATE_EVENT_CHANGED` en cada captura. Mitigación: capturar `div`/`splits` solo para el listing primario. Pendiente de confirmar con David. |
+| D10 | ~~Qué hacer cuando el proveedor trae para una fecha de `FX_RATES` un tipo distinto del ya guardado.~~ **Sustituida** (2026-10-13, `decisiones-modelo.md` §6.b). | Como precios: dentro de las últimas `RECENT_SESSIONS` (5) fechas guardadas de esa divisa se acepta en silencio (UPDATE); más atrás, UPDATE + `PRICE_REVISED` con objetivo `{currency, date}` y `detail {old, new}` (se conserva el `old` del primero). N en un único sitio: `src/normalizer/revisions.ts`. |
+| D11 | ~~Qué hacer con un evento corporativo que el proveedor devuelve para una security desde varios listings.~~ **Sustituida** (2026-10-13, `decisiones-modelo.md` §5.5). | `div`/`splits` solo del listing primario: el job de captura solo los pide del primario (`src/eodhd/universe.ts`) y un payload de otro listing de la misma security se marca ok y se salta (contador `skippedNonPrimary`). |
+| D12 | Qué hacer cuando `fundamentals/` trae, para una clave bitemporal ya guardada (`FUNDAMENTALS`, `SHARES_OUTSTANDING`), valores distintos. | Provisional: línea antes NULL y ahora informada: se completa en silencio. Línea informada y distinta: se conserva y se emite `FUNDAMENTALS_REVISED` (`data_quality`, `warning`, objetivo la fila, `detail {old, new}`). Un restatement real (`filing_date` posterior) es una fila nueva. Pendiente de confirmar con David (propuesta P16). Reglas nuevas provisionales: `FUNDAMENTALS_REVISED` y `FUNDAMENTALS_INCOMPLETE`. |
+| D13 | Correspondencia de las líneas de `FUNDAMENTALS` con `Financials`, y divisa de `TotalAssets` del ETF. | Provisional: `LINE_MAP` (`src/normalizer/fundamentals.ts`) y `General.CurrencyCode` (propuestas P14 y P15). |
 
 ## Fuera de alcance
 

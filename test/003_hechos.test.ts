@@ -84,11 +84,11 @@ test('prices_daily: PK (listing, date), close obligatorio y SIN columnas ajustad
   expect((await columns('prices_daily')).sort()).toEqual(['close', 'date', 'high', 'listing_id', 'low', 'open', 'volume']);
 }));
 
-test('fx_rates: PK (currency, date), tipo positivo, GBX como fila propia', () => inRollback(async (c) => {
-  await c.query("INSERT INTO fx_rates (currency, date, rate_to_base) VALUES ('USD','2026-10-09',0.8593), ('GBX','2026-10-09',0.0115)");
-  expect((await dbError(c, "INSERT INTO fx_rates (currency, date, rate_to_base) VALUES ('USD','2026-10-09',0.9)"))?.code).toBe('23505');
-  expect((await dbError(c, "INSERT INTO fx_rates (currency, date, rate_to_base) VALUES ('EUR','2026-10-09',0)"))?.code).toBe('23514');
-  expect((await dbError(c, "INSERT INTO fx_rates (currency, date, rate_to_base) VALUES ('EUR','2026-10-09',-1)"))?.code).toBe('23514');
+test('fx_rates: PK (currency, date), tipo positivo, GBX como fila propia (GBP x 100)', () => inRollback(async (c) => {
+  await c.query("INSERT INTO fx_rates (currency, date, units_per_base) VALUES ('USD','2026-10-09',1.1637), ('GBX','2026-10-09',86.99)");
+  expect((await dbError(c, "INSERT INTO fx_rates (currency, date, units_per_base) VALUES ('USD','2026-10-09',0.9)"))?.code).toBe('23505');
+  expect((await dbError(c, "INSERT INTO fx_rates (currency, date, units_per_base) VALUES ('EUR','2026-10-09',0)"))?.code).toBe('23514');
+  expect((await dbError(c, "INSERT INTO fx_rates (currency, date, units_per_base) VALUES ('EUR','2026-10-09',-1)"))?.code).toBe('23514');
   expect((await dbError(c, "INSERT INTO fx_rates (currency, date) VALUES ('EUR','2026-10-09')"))?.code).toBe('23502');
 }));
 

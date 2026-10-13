@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { pool } from '../db/pool.js';
 import { writeListings, type ListingsInput, type ListingsSummary, type SymbolRecord } from '../normalizer/listings.js';
 import { writeDividends, writeSplits, type DividendRecord, type EventsSummary, type SplitRecord } from '../normalizer/events.js';
+import { writeFundamentals, type FundamentalsSummary } from '../normalizer/fundamentals.js';
 import { isFxSymbol, writeFx, type FxRecord, type FxSummary } from '../normalizer/fx.js';
 import { emptyPricesSummary, parseJsonExact, writePrices, type EodRecord, type PricesSummary } from '../normalizer/prices.js';
 
@@ -16,6 +17,7 @@ export interface ReplaySummary {
   dividends?: EventsSummary;
   splits?: EventsSummary;
   fx?: FxSummary;
+  fundamentals?: FundamentalsSummary;
 }
 
 // Contadores de EVENTOS (lo que una pasada cambia) frente a contadores de ESTADO (lo que una pasada ve).
@@ -24,7 +26,7 @@ const EVENT_KEYS: (keyof ListingsSummary)[] = ['created', 'updated', 'securities
 const changed = (x: ListingsSummary) => EVENT_KEYS.some((k) => x[k] > 0);
 const MAX_SWEEPS = 5;
 
-interface Row { id: string; run_id: string; endpoint: string; provider_symbol: string | null; params: Record<string, string>; http_status: number; content_hash: string }
+interface Row { id: string; run_id: string; endpoint: string; provider_symbol: string | null; params: Record<string, string>; http_status: number; content_hash: string; fetched_date: string }
 
 // Replay = volver a pasar desde raw_payload + payload_blob, SIN red (este módulo no importa el cliente HTTP) y sin
 // cargar ficheros. Primero comprueba cada payload y marca parse_status; los escritores de la fuente de verdad se enganchan
@@ -33,7 +35,8 @@ interface Row { id: string; run_id: string; endpoint: string; provider_symbol: s
 //   2. eod/{symbol}               -> precios brutos (src/normalizer/prices.ts), cuando el listing ya existe; si el símbolo es
 //                                    un cruce EURxxx.FOREX va a FX_RATES (src/normalizer/fx.ts), que no depende de ningún listing.
 //   3. div/{symbol}, splits/{symbol} -> DIVIDEND y STOCK_SPLIT (src/normalizer/events.ts), cuando el listing ya existe.
-// Los demás endpoints (fundamentals...) solo se comprueban hasta que tengan escritor.
+//   4. fundamentals/{symbol}      -> FUNDAMENTALS, SHARES_OUTSTANDING y sector (acciones) o ETF_* (src/normalizer/fundamentals.ts).
+// Los demás endpoints solo se comprueban hasta que tengan escritor.
 //   ok       : respuesta 2xx, hash que coincide, JSON válido (un BOM inicial se tolera al decodificar) y escritor sin error.
 //   error    : cuerpo purgado, hash que no coincide, HTTP no 2xx, JSON inválido o fallo del escritor (se revierte su transacción).
 //   pendiente: el escritor no puede trabajar todavía (precios de un símbolo sin listing): no se marca y se reintenta en el siguiente replay.
@@ -43,7 +46,7 @@ interface Row { id: string; run_id: string; endpoint: string; provider_symbol: s
 // Las filas sin respuesta (transport_error) tienen parse_status NULL y no hay nada que releer.
 export async function replay(options: { runId?: string; all?: boolean; maxSweeps?: number } = {}): Promise<ReplaySummary> {
   const rows = await pool.query<Row>(
-    `SELECT raw_payload_id AS id, ingestion_run_id AS run_id, endpoint, provider_symbol, params, http_status, content_hash FROM raw_payload
+    `SELECT raw_payload_id AS id, ingestion_run_id AS run_id, endpoint, provider_symbol, params, http_status, content_hash, (fetched_at AT TIME ZONE 'UTC')::date::text AS fetched_date FROM raw_payload
      WHERE ${options.all
        // `all`: solo el último payload de cada (endpoint, params, símbolo). Repasar el historial entero reaplicaría capturas
        // viejas por encima de las nuevas; lo anterior ya quedó reflejado cuando llegó.
@@ -58,6 +61,7 @@ export async function replay(options: { runId?: string; all?: boolean; maxSweeps
   const listingInputs: ListingsInput[] = [];
   const priceItems: { row: Row; records: EodRecord[] }[] = [];
   const eventItems: { row: Row; kind: 'div' | 'splits'; records: unknown[] }[] = [];
+  const fundamentalsItems: { row: Row; body: unknown }[] = [];
 
   const mark = async (row: Row, problem: string | null) => {
     await pool.query('UPDATE raw_payload SET parse_status = $2, parse_error = $3 WHERE raw_payload_id = $1', [row.id, problem ? 'error' : 'ok', problem]);
@@ -104,6 +108,11 @@ export async function replay(options: { runId?: string; all?: boolean; maxSweeps
       if (!Array.isArray(parsed)) problem = `escritor de ${kind}: se esperaba una lista`;
       else if (!row.provider_symbol) problem = `escritor de ${kind}: la fila no tiene provider_symbol`;
       else { eventItems.push({ row, kind, records: parsed }); continue; }
+    }
+
+    if (!problem && row.endpoint === 'fundamentals/{symbol}') {
+      if (!row.provider_symbol) problem = 'escritor de fundamentals: la fila no tiene provider_symbol';
+      else { fundamentalsItems.push({ row, body: parsed }); continue; }
     }
 
     await mark(row, problem);
@@ -156,6 +165,19 @@ export async function replay(options: { runId?: string; all?: boolean; maxSweeps
       if (kind === 'div') summary.dividends = addCounts2(summary.dividends, s); else summary.splits = addCounts2(summary.splits, s);
     } catch (e) {
       problem = `escritor de ${kind}: ${(e as Error).message}`;
+    }
+    await mark(row, problem);
+  }
+
+  // Fundamentals: después de las listas (la company y la security las crea el escritor de listings con este mismo payload).
+  for (const { row, body } of fundamentalsItems) {
+    let problem: string | null = null;
+    try {
+      const s = await writeFundamentals({ rawPayloadId: row.id, runId: row.run_id, symbol: row.provider_symbol!, fetchedDate: row.fetched_date, body });
+      if (s === null) { summary.deferred++; continue; } // sin listing todavía (p. ej. acción cuya lista aún no se ha capturado)
+      summary.fundamentals = addCounts2(summary.fundamentals, s);
+    } catch (e) {
+      problem = `escritor de fundamentals: ${(e as Error).message}`;
     }
     await mark(row, problem);
   }

@@ -6,6 +6,10 @@ import { emitFinding } from './findings.js';
 // UNIQUE (security_id, ex_date). Un evento ya guardado que llega con otro valor se ACTUALIZA y emite CORPORATE_EVENT_CHANGED
 // {old, new} (si ya hay uno abierto se conserva el old del primero); los metadatos (period y fechas de dividendo) se
 // actualizan sin finding. Idempotentes. Devuelven null si el listing todavía no existe: el payload se queda pendiente.
+// Solo cuenta el listing PRIMARIO (§5.5, D11 sustituida): un payload de otro listing de la misma security se salta (se cuenta en
+// skippedNonPrimary). Lo que se descarta deja rastro: CORPORATE_EVENT_INCOMPLETE (dividendo sin importe o divisa, split con ratio
+// ilegible, fecha inválida) y DIVIDEND_SAME_EX_DATE / SPLIT_SAME_EX_DATE (misma fecha ex con valores distintos), todos sobre
+// el raw_payload.
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const date = (v: unknown): string | null => (typeof v === 'string' && DATE.test(v) ? v : null);
@@ -39,30 +43,43 @@ export interface EventsSummary {
   changed: number; // valor corregido por el proveedor: se actualiza y se emite CORPORATE_EVENT_CHANGED
   metaUpdated: number; // solo cambió algún metadato (period, fechas): se actualiza sin finding
   skippedBadDate: number;
-  skippedNoValue: number; // dividendo sin unadjustedValue o con currency ausente / split con ratio ilegible
-  skippedSameExDate: number; // fechas con varios dividendos en la misma respuesta: no se escriben (DIVIDEND_SAME_EX_DATE)
-  skippedConflict: number; // splits con la misma fecha y ratios distintos en la misma respuesta
+  skippedNoValue: number; // dividendo sin unadjustedValue o currency / split con ratio ilegible (CORPORATE_EVENT_INCOMPLETE)
+  skippedSameExDate: number; // filas de fechas repetidas con valores distintos: no se escriben (DIVIDEND_/SPLIT_SAME_EX_DATE)
+  skippedNonPrimary: number; // payload de un listing que no es el primario de su security: se marca leído y se salta
 }
 
-export const emptyEventsSummary = (): EventsSummary => ({ payloads: 0, rows: 0, inserted: 0, unchanged: 0, changed: 0, metaUpdated: 0, skippedBadDate: 0, skippedNoValue: 0, skippedSameExDate: 0, skippedConflict: 0 });
+export const emptyEventsSummary = (): EventsSummary => ({ payloads: 0, rows: 0, inserted: 0, unchanged: 0, changed: 0, metaUpdated: 0, skippedBadDate: 0, skippedNoValue: 0, skippedSameExDate: 0, skippedNonPrimary: 0 });
 
-async function securityOf(c: import('pg').PoolClient, symbol: string): Promise<string | null> {
-  return (await c.query<{ id: string }>('SELECT security_id AS id FROM listing WHERE provider_symbol = $1', [symbol])).rows[0]?.id ?? null;
+async function listingOf(c: import('pg').PoolClient, symbol: string): Promise<{ securityId: string; primary: boolean } | null> {
+  const r = (await c.query<{ id: string; primary: boolean }>('SELECT security_id AS id, is_primary_listing AS "primary" FROM listing WHERE provider_symbol = $1', [symbol])).rows[0];
+  return r ? { securityId: r.id, primary: r.primary } : null;
+}
+
+type Discarded = { reason: string; row: unknown };
+async function emitIncomplete(c: import('pg').PoolClient, input: { rawPayloadId: string; runId: string; symbol: string }, discarded: Discarded[]) {
+  if (!discarded.length) return;
+  await emitFinding(c, {
+    ruleCode: 'CORPORATE_EVENT_INCOMPLETE', targetTable: 'raw_payload', targetKey: { raw_payload_id: Number(input.rawPayloadId) },
+    detail: { provider_symbol: input.symbol, rows: discarded }, detectedByRun: input.runId,
+  });
 }
 
 export async function writeDividends(input: EventsInput<DividendRecord>): Promise<EventsSummary | null> {
   return withActor('normalizer', `dividendos desde raw_payload ${input.rawPayloadId}`, async (c) => {
-    const securityId = await securityOf(c, input.symbol);
-    if (!securityId) return null;
+    const listing = await listingOf(c, input.symbol);
+    if (!listing) return null;
+    const securityId = listing.securityId;
     const s = emptyEventsSummary();
     s.payloads = 1;
+    if (!listing.primary) { s.skippedNonPrimary = 1; return s; }
+    const discarded: Discarded[] = [];
 
     // Se agrupa por fecha ex: dos o más filas para la misma fecha no caben en la clave y esa fecha no se escribe.
     const byDate = new Map<string, DividendRecord[]>();
     for (const r of input.records) {
       s.rows++;
       const d = date(r.date);
-      if (!d) { s.skippedBadDate++; continue; }
+      if (!d) { s.skippedBadDate++; discarded.push({ reason: 'fecha inválida', row: r }); continue; }
       byDate.set(d, [...(byDate.get(d) ?? []), r]);
     }
     const a = { ex: [] as string[], decl: [] as (string | null)[], rec: [] as (string | null)[], pay: [] as (string | null)[], period: [] as (string | null)[], amount: [] as string[], cur: [] as string[] };
@@ -72,7 +89,7 @@ export async function writeDividends(input: EventsInput<DividendRecord>): Promis
       const r = rows[0]!;
       const amount = num(r.unadjustedValue);
       const cur = typeof r.currency === 'string' && r.currency !== '' ? r.currency : null;
-      if (amount === null || cur === null) { s.skippedNoValue++; continue; }
+      if (amount === null || cur === null) { s.skippedNoValue++; discarded.push({ reason: amount === null ? 'sin unadjustedValue' : 'sin currency', row: r }); continue; }
       a.ex.push(d); a.decl.push(date(r.declarationDate)); a.rec.push(date(r.recordDate)); a.pay.push(date(r.paymentDate));
       a.period.push(num(r.period)); a.amount.push(amount); a.cur.push(cur);
     }
@@ -82,6 +99,7 @@ export async function writeDividends(input: EventsInput<DividendRecord>): Promis
         detail: { provider_symbol: input.symbol, dates: clashes }, detectedByRun: input.runId,
       });
     }
+    await emitIncomplete(c, input, discarded);
     if (!a.ex.length) return s;
 
     const incoming = `unnest($2::date[], $3::date[], $4::date[], $5::date[], $6::text[], $7::numeric[], $8::text[]) AS i(ex_date, declaration_date, record_date, payment_date, period, amount_native, currency)`;
@@ -132,27 +150,40 @@ export function parseSplitRatio(v: unknown): { n: string; d: string } | null {
 
 export async function writeSplits(input: EventsInput<SplitRecord>): Promise<EventsSummary | null> {
   return withActor('normalizer', `splits desde raw_payload ${input.rawPayloadId}`, async (c) => {
-    const securityId = await securityOf(c, input.symbol);
-    if (!securityId) return null;
+    const listing = await listingOf(c, input.symbol);
+    if (!listing) return null;
+    const securityId = listing.securityId;
     const s = emptyEventsSummary();
     s.payloads = 1;
+    if (!listing.primary) { s.skippedNonPrimary = 1; return s; }
+    const discarded: Discarded[] = [];
 
     const byDate = new Map<string, { n: string; d: string }[]>();
     for (const r of input.records) {
       s.rows++;
       const dt = date(r.date);
-      if (!dt) { s.skippedBadDate++; continue; }
+      if (!dt) { s.skippedBadDate++; discarded.push({ reason: 'fecha inválida', row: r }); continue; }
       const ratio = parseSplitRatio(r.split);
-      if (!ratio) { s.skippedNoValue++; continue; }
+      if (!ratio) { s.skippedNoValue++; discarded.push({ reason: 'ratio ilegible', row: r }); continue; }
       byDate.set(dt, [...(byDate.get(dt) ?? []), ratio]);
     }
     const ex: string[] = [], num_: string[] = [], den: string[] = [];
+    const clashes: { ex_date: string; rows: { split: string }[] }[] = [];
     for (const [dt, ratios] of byDate) {
       // varias filas iguales el mismo día se colapsan; si difieren no se elige una al azar
       const first = ratios[0]!;
-      if (ratios.some((x) => Number(x.n) !== Number(first.n) || Number(x.d) !== Number(first.d))) { s.skippedConflict += ratios.length; continue; }
+      if (ratios.some((x) => Number(x.n) !== Number(first.n) || Number(x.d) !== Number(first.d))) {
+        s.skippedSameExDate += ratios.length; clashes.push({ ex_date: dt, rows: ratios.map((x) => ({ split: `${x.n}/${x.d}` })) }); continue;
+      }
       ex.push(dt); num_.push(first.n); den.push(first.d);
     }
+    if (clashes.length) {
+      await emitFinding(c, {
+        ruleCode: 'SPLIT_SAME_EX_DATE', targetTable: 'raw_payload', targetKey: { raw_payload_id: Number(input.rawPayloadId) },
+        detail: { provider_symbol: input.symbol, dates: clashes }, detectedByRun: input.runId,
+      });
+    }
+    await emitIncomplete(c, input, discarded);
     if (!ex.length) return s;
 
     const incoming = `unnest($2::date[], $3::numeric[], $4::numeric[]) AS i(ex_date, split_numerator, split_denominator)`;

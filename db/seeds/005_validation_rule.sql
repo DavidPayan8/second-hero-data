@@ -2,7 +2,7 @@
 -- apagar una regla o cambiar su severidad en producción sin desplegar, y un seed que se relance no debe revertir esos
 -- cambios operativos. Una regla nueva entra por seed; modificar una existente es un UPDATE deliberado.
 -- Códigos y severidades: modelo-entidades-validacion.md (tabla de productores) y PLAN.md Fase 4. VENUE_UNMAPPED y
--- ASSET_TYPE_UNMAPPED son nuevos (decisión D6) QUOTE_CURRENCY_MISSING (D7) y LISTING_REAPPEARED (D8): structural, warning; PRICE_REVISED (P13): data_quality, warning. La lógica de cada regla vive en el código.
+-- ASSET_TYPE_UNMAPPED son nuevos (decisión D6) QUOTE_CURRENCY_MISSING (D7) y LISTING_REAPPEARED (D8): structural, warning; PRICE_REVISED (P13): data_quality, warning; SPLIT_SAME_EX_DATE y CORPORATE_EVENT_INCOMPLETE (decisiones-modelo.md §5.5): structural, warning; FUNDAMENTALS_REVISED (data_quality) y FUNDAMENTALS_INCOMPLETE (structural), warning, provisionales (D12). La lógica de cada regla vive en el código.
 INSERT INTO validation_rule (rule_code, description, category, default_severity, enabled) VALUES
   ('ACCOUNTING_BALANCE',       'Activo = Pasivo + Patrimonio dentro de tolerancia. DESACTIVADA hasta resolver D4: FUNDAMENTALS no guarda el pasivo total.', 'data_quality', 'error',   false),
   ('CURRENCY_COHERENCE',       'La divisa de FUNDAMENTALS y la quote_currency del listing tienen camino de conversión en FX_RATES.',                         'data_quality', 'error',   true),
@@ -19,5 +19,9 @@ INSERT INTO validation_rule (rule_code, description, category, default_severity,
   ('LISTING_REAPPEARED',      'Un listing delisted vuelve a aparecer en la lista de activos: no se reactiva solo, se avisa para revisión.', 'structural', 'warning', true),
   ('PRICE_REVISED',           'El proveedor revisa un precio ya guardado (o el volumen de una sesión fuera de las últimas N): se acepta la revisión y el finding guarda el valor anterior y el nuevo.', 'data_quality', 'warning', true),
   ('ASSET_TYPE_UNMAPPED',      'El Type del proveedor no se mapea a ningún ASSET_TYPE: el valor no se ingiere.',                                             'structural',   'warning', true),
+  ('SPLIT_SAME_EX_DATE',       'Una respuesta trae dos splits con la misma fecha ex y ratios distintos para un valor: esa fecha no se escribe hasta revisarla.',  'structural',   'warning', true),
+  ('CORPORATE_EVENT_INCOMPLETE','Una respuesta de dividendos o splits trae filas que no se pueden crear (dividendo sin unadjustedValue o currency, split con ratio ilegible, fecha inválida): se descartan y el finding las guarda.', 'structural', 'warning', true),
+  ('FUNDAMENTALS_REVISED',     'Una fila bitemporal (FUNDAMENTALS o SHARES_OUTSTANDING) ya guardada llega con otro valor para la misma clave: se conserva la guardada y el finding guarda ambos valores.', 'data_quality', 'warning', true),
+  ('FUNDAMENTALS_INCOMPLETE',  'Una respuesta de fundamentals trae periodos o campos que no se pueden escribir (periodo sin divisa de reporte, fecha inválida, campo del ETF fuera de rango): se descartan y el finding los guarda.', 'structural', 'warning', true),
   ('DIVIDEND_SAME_EX_DATE',    'Una respuesta trae dos o más dividendos con la misma fecha ex para un valor: esa fecha no se escribe hasta revisarla.',     'structural',   'warning', true)
 ON CONFLICT (rule_code) DO NOTHING;
