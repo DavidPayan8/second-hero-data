@@ -279,7 +279,7 @@ test('replay: relee de raw_payload + payload_blob sin red y marca parse_status',
   try {
     const out = await replay({ runId: s.runId });
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(out).toEqual({ checked: 3, ok: 1, error: 2 }); // la fila de transport_error no se relee
+    expect(out).toEqual({ checked: 3, ok: 1, error: 2, deferred: 0 }); // la fila de transport_error no se relee
   } finally {
     vi.unstubAllGlobals();
     vi.stubGlobal('fetch', (input: string | URL | Request, init?: RequestInit) => {
@@ -297,7 +297,7 @@ test('replay: relee de raw_payload + payload_blob sin red y marca parse_status',
   expect(get('text/1').parse_error).toContain('JSON inválido');
   expect(get('cut/1')).toMatchObject({ parse_status: null, parse_error: null, transport_error: expect.any(String) });
   // volver a pasar el replay no cambia nada: solo recorre las filas en pending
-  expect(await replay({ runId: s.runId })).toEqual({ checked: 0, ok: 0, error: 0 });
+  expect(await replay({ runId: s.runId })).toEqual({ checked: 0, ok: 0, error: 0, deferred: 0 });
 });
 
 test('replay detecta un cuerpo purgado y un cuerpo que ya no casa con su hash', async () => {
@@ -305,7 +305,7 @@ test('replay detecta un cuerpo purgado y un cuerpo que ya no casa con su hash', 
   const r = await rows(s.runId);
   await pool.query('UPDATE payload_blob SET body = NULL, purged_at = now() WHERE content_hash = $1', [r[0].content_hash]);
   await pool.query('UPDATE payload_blob SET body = $2 WHERE content_hash = $1', [r[1].content_hash, Buffer.from('{"alterado":true}')]);
-  expect(await replay({ runId: s.runId })).toEqual({ checked: 2, ok: 0, error: 2 });
+  expect(await replay({ runId: s.runId })).toEqual({ checked: 2, ok: 0, error: 2, deferred: 0 });
   const after = await rows(s.runId);
   expect(after[0].parse_error).toContain('purgado');
   expect(after[1].parse_error).toContain('hash');

@@ -516,7 +516,7 @@ describe('idempotencia y replay', () => {
   test('sin all solo se recorren las filas pending; después de una pasada no queda ninguna', async () => {
     await list('LSE', [sym('P1', { Isin: 'IE00TEST0201' })]);
     expect(await replay()).toMatchObject({ checked: 1, ok: 1 });
-    expect(await replay()).toEqual({ checked: 0, ok: 0, error: 0 });
+    expect(await replay()).toEqual({ checked: 0, ok: 0, error: 0, deferred: 0 });
     expect((await replay({ all: true })).checked).toBe(1);
   });
 

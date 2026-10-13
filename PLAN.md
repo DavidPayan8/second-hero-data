@@ -246,6 +246,7 @@ Huecos detectados al planificar que el diseño no resuelve todavía. Se implemen
 | D6 | Códigos de regla nuevos (`VENUE_UNMAPPED`, `ASSET_TYPE_UNMAPPED`). | Se añaden al catálogo (es extensible por diseño), categoría `structural`, severidad `warning`. |
 | D7 | Código de regla para un símbolo en alcance sin `Currency` en `exchange-symbol-list` (no existía ninguno). | `QUOTE_CURRENCY_MISSING`, categoría `structural`, severidad `warning`; un finding por payload (objetivo: la fila de `raw_payload`) con el recuento y una muestra ordenada de símbolos. |
 | D8 | Código de regla para un listing `delisted` que vuelve a aparecer en la lista de activos (no se reactiva solo). | `LISTING_REAPPEARED`, categoría `structural`, severidad `warning`; objetivo: el listing. Solo se emite si la lista de activos es posterior a la última de deslistados de esa bolsa; una lista de activos más vieja no avisa. |
+| D9 | Qué hacer cuando el proveedor trae para una fecha un precio bruto distinto del ya guardado (el modelo dice que el precio bruto es inmutable y no define el caso). | Provisional: se conserva el guardado y se emite `PRICE_REVISED` (`data_quality`, `warning`; objetivo la fila `{listing_id, date}`; `detail` con el valor guardado y el nuevo). No se sobrescribe. Pendiente de confirmar con David (propuesta P13). |
 
 ## Fuera de alcance
 
