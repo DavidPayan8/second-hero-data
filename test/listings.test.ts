@@ -294,21 +294,169 @@ describe('camino rápido por provider_symbol con comprobación del ISIN', () => 
     expect(aud.every((a) => a.changed_by === 'normalizer' && /raw_payload/.test(a.reason))).toBe(true);
   });
 
-  test('D1: una segunda cotización de la misma security (mismo ISIN) no se ingiere todavía', async () => {
-    await list('US', [sym('DUAL', { Exchange: 'NASDAQ', Currency: 'USD', Isin: 'US0000003005' })]);
-    await list('LSE', [sym('DUAL', { Exchange: 'LSE', Currency: 'GBX', Isin: 'US0000003005' })]);
-    const out = await run();
-    expect(out.listings).toMatchObject({ created: 1, skippedMultiListing: 1 });
-    expect(await count('listing')).toBe(1);
-    expect(await count('security')).toBe(1);
-  });
-
   test('un ETF y una acción con el mismo ISIN de una security ya creada de otro tipo -> conflicto', async () => {
     await list('US', [sym('AMBOS', { Exchange: 'NYSE', Currency: 'USD', Isin: 'US0000003006', Type: 'ETF' })]);
     await run();
     await list('US', [sym('AMBOS', { Exchange: 'NYSE', Currency: 'USD', Isin: 'US0000003006', Type: 'Common Stock' })]);
     await run();
     expect((await findings('IDENTITY_RELINK_CONFLICT'))[0]!.detail).toMatchObject({ reason: 'asset_type' });
+  });
+});
+
+describe('varias cotizaciones por security y listing primario (P12)', () => {
+  const primaries = async () => (await pool.query(
+    `SELECT s.isin, l.provider_symbol FROM listing l JOIN security s USING (security_id) WHERE l.is_primary_listing ORDER BY s.isin, l.provider_symbol`,
+  )).rows as { isin: string; provider_symbol: string }[];
+  const perSecurity = async () => (await pool.query(
+    `SELECT s.isin, count(*)::int AS listings, count(*) FILTER (WHERE l.is_primary_listing)::int AS primarios FROM listing l JOIN security s USING (security_id) GROUP BY s.isin ORDER BY s.isin`,
+  )).rows;
+
+  test('ARKC (GBX) y 1ARG (USD) con el mismo ISIN: una security, dos listings, primario ARKC, también con la lista al revés', async () => {
+    for (const orden of [['1ARG', 'ARKC'], ['ARKC', '1ARG']]) {
+      await cleanAll();
+      runId = '';
+      const lineas: Record<string, unknown> = { '1ARG': sym('1ARG', { Currency: 'USD', Isin: 'GB00TEST0001' }), ARKC: sym('ARKC', { Currency: 'GBX', Isin: 'GB00TEST0001' }) };
+      await list('LSE', orden.map((k) => lineas[k]));
+      const out = await run();
+      expect(out.listings).toMatchObject({ created: 2, securitiesCreated: 1 });
+      expect(await perSecurity()).toEqual([{ isin: 'GB00TEST0001', listings: 2, primarios: 1 }]);
+      expect(await primaries()).toEqual([{ isin: 'GB00TEST0001', provider_symbol: 'ARKC.LSE' }]);
+      expect(await count('security')).toBe(1);
+    }
+  });
+
+  test('regla 1: la bolsa del país del prefijo del ISIN gana aunque otra cotice en la divisa de su bolsa; no depende del orden de captura', async () => {
+    for (const ordenPayloads of [['LSE', 'IR'], ['IR', 'LSE']]) {
+      await cleanAll();
+      runId = '';
+      const payloads: Record<string, unknown[]> = {
+        LSE: [sym('ETFX', { Exchange: 'LSE', Currency: 'GBX', Isin: 'IE00TEST0501' })], // XLON es de GB: divisa de su bolsa (GBX cuenta como GBP) pero país distinto del prefijo IE
+        IR: [sym('ETFX', { Exchange: 'IR', Currency: 'USD', Isin: 'IE00TEST0501' })], // XDUB es de IE: país del prefijo, aunque la divisa no sea EUR
+      };
+      for (const code of ordenPayloads) await list(code, payloads[code]!);
+      await run();
+      expect(await primaries()).toEqual([{ isin: 'IE00TEST0501', provider_symbol: 'ETFX.IR' }]);
+      expect((await perSecurity())[0]).toMatchObject({ listings: 2, primarios: 1 });
+    }
+  });
+
+  test('regla 2: la divisa de la bolsa o su subunidad gana a las demás cuando el país no discrimina', async () => {
+    await list('LSE', [sym('AAA', { Currency: 'USD', Isin: 'GB00TEST0601' }), sym('ZZZ', { Currency: 'GBX', Isin: 'GB00TEST0601' }), sym('MMM', { Currency: 'EUR', Isin: 'GB00TEST0601' })]);
+    await run();
+    expect(await primaries()).toEqual([{ isin: 'GB00TEST0601', provider_symbol: 'ZZZ.LSE' }]); // ZZZ en GBX, aunque AAA sea alfabéticamente menor
+    // GBP también es la divisa de la bolsa
+    await cleanAll(); runId = '';
+    await list('LSE', [sym('AAA', { Currency: 'USD', Isin: 'GB00TEST0602' }), sym('ZZZ', { Currency: 'GBP', Isin: 'GB00TEST0602' })]);
+    await run();
+    expect(await primaries()).toEqual([{ isin: 'GB00TEST0602', provider_symbol: 'ZZZ.LSE' }]);
+  });
+
+  test('regla 3: con todo igual, el provider_symbol menor en orden alfabético', async () => {
+    await list('LSE', [sym('CCC', { Currency: 'USD', Isin: 'GB00TEST0701' }), sym('AAA', { Currency: 'USD', Isin: 'GB00TEST0701' }), sym('BBB', { Currency: 'USD', Isin: 'GB00TEST0701' })]);
+    await run();
+    expect(await primaries()).toEqual([{ isin: 'GB00TEST0701', provider_symbol: 'AAA.LSE' }]);
+  });
+
+  test('un prefijo de ISIN que no es un país (XS) no puntúa: manda la divisa y luego el símbolo', async () => {
+    await list('LSE', [sym('BONO1', { Currency: 'USD', Isin: 'XS0000000001' })]);
+    await list('IR', [sym('BONO2', { Exchange: 'IR', Currency: 'EUR', Isin: 'XS0000000001' })]); // XDUB: EUR, la divisa de su bolsa
+    await run();
+    expect(await primaries()).toEqual([{ isin: 'XS0000000001', provider_symbol: 'BONO2.IR' }]);
+  });
+
+  test('un listing sin bolsa no es primario si hay otro con bolsa, aunque su símbolo sea menor y su divisa encaje', async () => {
+    await list('XFRA', [sym('AAA', { Exchange: 'F', Currency: 'EUR', Isin: 'DE00TEST0801' })]); // código sin fila en SOURCE_EXCHANGE: sin MIC
+    await list('LSE', [sym('ZZZ', { Currency: 'USD', Isin: 'DE00TEST0801' })]);
+    await run();
+    expect(await primaries()).toEqual([{ isin: 'DE00TEST0801', provider_symbol: 'ZZZ.LSE' }]);
+    // y si solo hay uno sin bolsa, es el primario
+    await cleanAll(); runId = '';
+    await list('XFRA', [sym('SOLO', { Exchange: 'F', Currency: 'EUR', Isin: 'DE00TEST0802' })]);
+    await run();
+    expect(await primaries()).toEqual([{ isin: 'DE00TEST0802', provider_symbol: 'SOLO.XFRA' }]);
+  });
+
+  test('la misma security cotizando en dos bolsas distintas (US y LSE): la del país del ISIN gana', async () => {
+    await list('LSE', [sym('DUAL', { Exchange: 'LSE', Currency: 'GBX', Isin: 'US0000003005' })]);
+    await list('US', [sym('DUAL', { Exchange: 'NASDAQ', Currency: 'USD', Isin: 'US0000003005' })]);
+    await run();
+    expect(await count('security')).toBe(1);
+    expect(await primaries()).toEqual([{ isin: 'US0000003005', provider_symbol: 'DUAL.US' }]);
+  });
+
+  test('sin ISIN, una security por símbolo y cada listing es el primario de la suya', async () => {
+    await list('LSE', [sym('SINISIN', { Isin: null }), sym('OTRO', { Isin: null })]);
+    await run();
+    expect(await count('security')).toBe(2);
+    expect((await pool.query('SELECT count(*)::int AS n FROM listing WHERE is_primary_listing')).rows[0].n).toBe(2);
+  });
+
+  test('un listing nuevo que gana cambia el primario y el cambio queda auditado; una segunda pasada deja 0 filas nuevas', async () => {
+    await list('LSE', [sym('1ARG', { Currency: 'USD', Isin: 'GB00TEST0901' })]);
+    const p1 = await run();
+    expect(p1.listings).toMatchObject({ created: 1, primaryChanges: 0 });
+    expect(await primaries()).toEqual([{ isin: 'GB00TEST0901', provider_symbol: '1ARG.LSE' }]);
+    await list('LSE', [sym('1ARG', { Currency: 'USD', Isin: 'GB00TEST0901' }), sym('ARKC', { Currency: 'GBX', Isin: 'GB00TEST0901' })]); // aparece la línea GBX
+    const p2 = await run();
+    expect(p2.listings).toMatchObject({ created: 1, primaryChanges: 1 });
+    expect(await primaries()).toEqual([{ isin: 'GB00TEST0901', provider_symbol: 'ARKC.LSE' }]);
+    const aud = (await pool.query(
+      `SELECT d.old_value, d.new_value, d.changed_by, d.reason, l.provider_symbol FROM dimension_audit d JOIN listing l ON d.row_key = jsonb_build_object('listing_id', l.listing_id)
+       WHERE d.table_name = 'listing' AND d.column_name = 'is_primary_listing' AND d.op = 'update' ORDER BY d.dimension_audit_id`,
+    )).rows;
+    expect(aud).toMatchObject([{ provider_symbol: '1ARG.LSE', old_value: 'true', new_value: 'false', changed_by: 'normalizer' }]);
+    expect(aud[0]!.reason).toMatch(/raw_payload/);
+    const before = await count('dimension_audit');
+    const p3 = await run();
+    expect(p3.listings).toMatchObject({ created: 0, primaryChanges: 0 });
+    expect(await count('dimension_audit')).toBe(before); // 0 filas nuevas
+    expect(await primaries()).toEqual([{ isin: 'GB00TEST0901', provider_symbol: 'ARKC.LSE' }]);
+  });
+
+  test('un ISIN que se completa después entra en la regla del primario', async () => {
+    await list('IR', [sym('SIN1', { Exchange: 'IR', Currency: 'USD', Isin: null })]);
+    await run();
+    // sin ISIN, el listing es el único: primario. Cuando llega el ISIN (IE) y otra línea en LSE, el país del prefijo decide.
+    await list('IR', [sym('SIN1', { Exchange: 'IR', Currency: 'USD', Isin: 'IE00TEST1001' })]);
+    await list('LSE', [sym('SIN2', { Exchange: 'LSE', Currency: 'GBX', Isin: 'IE00TEST1001' })]);
+    await run();
+    expect(await primaries()).toEqual([{ isin: 'IE00TEST1001', provider_symbol: 'SIN1.IR' }]);
+  });
+
+  test('el resultado no depende del orden de las listas: Londres se procesa antes que EEUU y aun así queda estable en un solo replay', async () => {
+    // la lista de Londres (más antigua) trae la acción con el ISIN de una acción que solo se crea desde la lista de EEUU, que tiene su fundamentals
+    await list('LSE', [sym('0AAA', { Type: 'Common Stock', Currency: 'USD', Isin: 'US0000012001' })]);
+    await list('US', [sym('AAA', { Type: 'Common Stock', Exchange: 'NASDAQ', Currency: 'USD', Isin: 'US0000012001' })]);
+    await fundamentals('AAA.US', { Name: 'Acción AAA', CIK: '0000012000' });
+    const first = await run();
+    expect(first.listings).toMatchObject({ created: 2, securitiesCreated: 1, companiesCreated: 1 });
+    expect(first.listingsSweeps).toBe(3); // la 2.ª pasada encuentra la security que la 1.ª creó y la 3.ª confirma que ya no cambia nada
+    expect(await primaries()).toEqual([{ isin: 'US0000012001', provider_symbol: 'AAA.US' }]);
+    const estado = async () => ({ l: await count('listing'), s: await count('security'), c: await count('company'), a: await count('dimension_audit'), f: await count('data_quality_finding') });
+    const antes = await estado();
+    const second = await run();
+    expect(second.listings).toMatchObject({ created: 0, updated: 0, securitiesCreated: 0, companiesCreated: 0, primaryChanges: 0 });
+    expect(second.listingsSweeps).toBe(1);
+    expect(await estado()).toEqual(antes); // 0 filas nuevas
+  });
+
+  test('delisted que reaparece como activo: no se reactiva y emite LISTING_REAPPEARED; una lista de activos vieja no avisa', async () => {
+    await list('US', [sym('RENACE', { Exchange: 'NYSE', Currency: 'USD', Isin: 'US0000011001' })]); // p1 activo
+    await list('US', [sym('RENACE', { Exchange: 'NYSE', Currency: 'USD', Isin: 'US0000011001' })], { delisted: '1' }); // p2 deslistado, más nuevo
+    await run();
+    expect((await one<{ status: string }>('SELECT status FROM listing')).status).toBe('delisted');
+    expect(await findings('LISTING_REAPPEARED')).toHaveLength(0); // la lista de activos es la vieja: no es una reaparición
+    await list('US', [sym('RENACE', { Exchange: 'NYSE', Currency: 'USD', Isin: 'US0000011001' })]); // p3 activo, el más nuevo
+    const out = await run();
+    expect(out.listings).toMatchObject({ reappeared: 1 });
+    expect((await one<{ status: string }>('SELECT status FROM listing')).status).toBe('delisted'); // no se reactiva
+    const f = await findings('LISTING_REAPPEARED');
+    expect(f).toHaveLength(1);
+    expect(f[0]).toMatchObject({ target_table: 'listing', severity: 'warning', status: 'open', detail: { provider_symbol: 'RENACE.US' } });
+    const before = await count('dimension_audit');
+    await run();
+    expect(await findings('LISTING_REAPPEARED')).toHaveLength(1); // repetir no duplica
+    expect(await count('dimension_audit')).toBe(before);
   });
 });
 

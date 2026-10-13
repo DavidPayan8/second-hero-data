@@ -1,13 +1,20 @@
 import { createHash } from 'node:crypto';
 import { pool } from '../db/pool.js';
-import { writeListings, type ListingsSummary, type SymbolRecord } from '../normalizer/listings.js';
+import { writeListings, type ListingsInput, type ListingsSummary, type SymbolRecord } from '../normalizer/listings.js';
 
 export interface ReplaySummary {
   checked: number;
   ok: number;
   error: number;
   listings?: ListingsSummary;
+  listingsSweeps?: number; // pasadas del escritor de listings hasta que dejó de cambiar nada
 }
+
+// Contadores de EVENTOS (lo que una pasada cambia) frente a contadores de ESTADO (lo que una pasada ve).
+// (reappeared, los conflictos y los hallazgos son estado: emitir de nuevo el mismo finding no cambia nada.)
+const EVENT_KEYS: (keyof ListingsSummary)[] = ['created', 'updated', 'securitiesCreated', 'companiesCreated', 'primaryChanges'];
+const changed = (x: ListingsSummary) => EVENT_KEYS.some((k) => x[k] > 0);
+const MAX_SWEEPS = 5;
 
 // Replay = volver a pasar desde raw_payload + payload_blob, SIN red (este módulo no importa el cliente HTTP) y sin
 // cargar ficheros. Primero comprueba cada payload y marca parse_status; después, los escritores de la fuente de verdad
@@ -33,6 +40,7 @@ export async function replay(options: { runId?: string; all?: boolean } = {}): P
     [options.runId ?? null],
   );
   const summary: ReplaySummary = { checked: 0, ok: 0, error: 0 };
+  const listingInputs: ListingsInput[] = [];
   for (const row of rows.rows) {
     const blob = (await pool.query<{ body: Buffer | null }>('SELECT body FROM payload_blob WHERE content_hash = $1', [row.content_hash])).rows[0];
     let problem: string | null = null;
@@ -48,7 +56,9 @@ export async function replay(options: { runId?: string; all?: boolean } = {}): P
     if (!problem && row.endpoint === 'exchange-symbol-list/{code}') {
       try {
         if (!Array.isArray(parsed)) throw new Error('se esperaba una lista de símbolos');
-        const s = await writeListings({ rawPayloadId: row.id, runId: row.run_id, code: row.params.code ?? '', delisted: row.params.delisted === '1', records: parsed as SymbolRecord[] });
+        const input = { rawPayloadId: row.id, runId: row.run_id, code: row.params.code ?? '', delisted: row.params.delisted === '1', records: parsed as SymbolRecord[] };
+        const s = await writeListings(input);
+        listingInputs.push(input);
         summary.listings = addCounts(summary.listings, s);
       } catch (e) {
         problem = `escritor de listings: ${(e as Error).message}`;
@@ -59,6 +69,23 @@ export async function replay(options: { runId?: string; all?: boolean } = {}): P
     summary.checked++;
     if (problem) summary.error++; else summary.ok++;
   }
+
+  // Las listas de símbolos se enlazan entre sí por ISIN (una acción cotizada en Londres reutiliza la security creada desde la
+  // lista de EEUU): el resultado de una pasada puede depender del orden en que se procesaron las listas. Se repite el escritor
+  // sobre las mismas listas hasta que una pasada no cambie nada, de modo que un replay deja un estado estable y repetirlo no
+  // produce filas nuevas. Los contadores de eventos se suman; los de estado son los de la última pasada.
+  if (summary.listings && listingInputs.length > 1) {
+    let sweeps = 1;
+    let events = changed(summary.listings);
+    while (events && sweeps < MAX_SWEEPS) {
+      let last: ListingsSummary | undefined;
+      for (const input of listingInputs) last = addCounts(last, await writeListings(input));
+      sweeps++;
+      summary.listings = { ...last!, ...Object.fromEntries(EVENT_KEYS.map((k) => [k, summary.listings![k] + last![k]])) } as ListingsSummary;
+      events = changed(last!);
+    }
+    summary.listingsSweeps = sweeps;
+  } else if (summary.listings) summary.listingsSweeps = 1;
   return summary;
 }
 

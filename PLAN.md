@@ -238,13 +238,14 @@ Huecos detectados al planificar que el diseño no resuelve todavía. Se implemen
 
 | Id | Hueco | Provisional |
 |---|---|---|
-| D1 | Qué listing es el **primario** cuando una security cotiza en varias bolsas (el índice garantiza como máximo uno, no cuál). | Una security = un símbolo en v1; su único listing es primario. No se ingieren cotizaciones múltiples de la misma security todavía. |
+| D1 | ~~Qué listing es el **primario** cuando una security cotiza en varias bolsas.~~ **Sustituida** (P12, 2026-10-13, `decisiones-modelo-identidad.md` §3.b). | Se ingieren **todas** las cotizaciones: una security por ISIN y un listing por símbolo. Primario, recalculado en cada pasada por security: sin bolsa no es primario si hay otro con bolsa; 1) bolsa en el país del prefijo del ISIN; 2) `quote_currency` = divisa de la bolsa o su subunidad (`src/fx/subunits.ts`); 3) `provider_symbol` menor. |
 | D2 | Cómo se mapea el `Type` de EODHD a `ASSET_TYPE` (no hay tabla `SOURCE_*` para ello). | Mapa constante en un módulo (`Common Stock` → `common_stock`, `ETF` → `etf`); tipo desconocido → no se ingiere + finding `ASSET_TYPE_UNMAPPED`. |
 | D3 | Set inicial de `SECTOR` / `INDUSTRY`. | Borrador propio (~11 sectores, sin copiar nombres ni códigos GICS) con Banking, Insurance y REITs como industrias, construido a partir de C15. **Lo aprueba David.** |
 | D4 | `ACCOUNTING_BALANCE` necesita pasivo total y `FUNDAMENTALS` no lo guarda (ya faltaban gasto de impuestos y reservas para ROIC y Altman). | Regla desactivada. Sin cambiar el esquema. |
 | D5 | Tolerancias de validación. | Un fichero de config: cuadre 1 %, SEC 0,5 %, salto 200 %, staleness 200 días (fundamentales) / 5 días hábiles (precios). |
 | D6 | Códigos de regla nuevos (`VENUE_UNMAPPED`, `ASSET_TYPE_UNMAPPED`). | Se añaden al catálogo (es extensible por diseño), categoría `structural`, severidad `warning`. |
 | D7 | Código de regla para un símbolo en alcance sin `Currency` en `exchange-symbol-list` (no existía ninguno). | `QUOTE_CURRENCY_MISSING`, categoría `structural`, severidad `warning`; un finding por payload (objetivo: la fila de `raw_payload`) con el recuento y una muestra ordenada de símbolos. |
+| D8 | Código de regla para un listing `delisted` que vuelve a aparecer en la lista de activos (no se reactiva solo). | `LISTING_REAPPEARED`, categoría `structural`, severidad `warning`; objetivo: el listing. Solo se emite si la lista de activos es posterior a la última de deslistados de esa bolsa; una lista de activos más vieja no avisa. |
 
 ## Fuera de alcance
 
