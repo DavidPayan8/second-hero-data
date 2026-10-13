@@ -94,3 +94,7 @@ Resultado de `npm run validate`: 266 filas comparadas; **AAPL queda `cross_check
 - La mayor parte de los criterios no se puede comprobar con el plan Free. No es un fallo del normalizador: el diseño (§3 de identidad) no crea acciones sin `fundamentals`.
 - Los 277 `VENUE_UNMAPPED` y los 14 `SECTOR_UNMAPPED` son trabajo pendiente de datos de referencia (mapa de venues y seed D3), no de código.
 - Nada se ha verificado fuera de EEUU para fundamentales, ni con historia larga de FX.
+
+## 7. Actualización del cruce con la SEC (2026-10-14, commit posterior)
+
+Dos cambios decididos por David (`decisiones-modelo-validacion.md` §7): se compara con la presentación de la SEC cuyo `filed` está más cerca del `reported_at` de la fila, y el beneficio solo cuenta si coincide con `NetIncomeLoss`. Estado actual de las filas: AAPL 18 años y 71 trimestres `cross_checked`, AMZN 18 y 73, TSLA 15 y 57. Findings abiertos de `SECOND_SOURCE_MISMATCH`: 14 (AAPL 3 de tipo `value`, AMZN 1, TSLA 8 `consolidated` y 2 `value`). Detalle y lectura en `docs/verificacion-eodhd.md`. Las secciones 3 y 5 describen el estado anterior a este cambio.
