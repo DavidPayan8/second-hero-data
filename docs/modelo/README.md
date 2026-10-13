@@ -63,12 +63,12 @@ Consolidado de lo que estaba repetido/disperso en cada chunk:
 
 ## Verificar en vivo contra EODHD (antes de construir la ingesta de esa tabla)
 
-- **★ PRIORIDAD 1 (bloqueante, condiciona la identidad de TODO el universo): CIK/LEI a nivel de empresa.** El agrupamiento por empresa (doble clase GOOGL/GOOG) depende enteramente de que EODHD dé un identificador oficial de emisor (CIK en `General.CIK`, LEI). Si no los da bien, **todo cae a `identity_source='isolated'`** y la doble clase se rompe en la práctica aunque el modelo la soporte. Es el primer sitio a mirar con la API key, antes que ningún otro. (Ver `decisiones-modelo-identidad.md` §3.)
+- **★ PRIORIDAD 1 — CIK/LEI a nivel de empresa.** ✅ *Parcial (2026-10-12, clave demo):* `General.CIK` (10 dígitos con ceros, `"0000320193"`) y `General.LEI` vienen en AAPL, TSLA y AMZN. Falta ver una doble clase (GOOGL/GOOG) y valores europeos y canadienses. El agrupamiento por empresa (doble clase GOOGL/GOOG) depende enteramente de que EODHD dé un identificador oficial de emisor (CIK en `General.CIK`, LEI). Si no los da bien, **todo cae a `identity_source='isolated'`** y la doble clase se rompe en la práctica aunque el modelo la soporte. Es el primer sitio a mirar con la API key, antes que ningún otro. (Ver `decisiones-modelo-identidad.md` §3.)
 - Shape de `InsiderTransactions` y existencia de `provider_txn_id`.
 - Existencia de id estable de filer (`holder_ref`) en el bloque de ownership.
-- Dirección de escala de `rating_mean` (asumido 1=Strong Buy).
-- Shape del bloque `ETF_Data` (NAV, holdings, allocations).
+- ~~Dirección de escala de `rating_mean`~~ ✅ 5 = Strong Buy (el `Rating` de AAPL cuadra con la media ponderada de sus recuentos así). Se guarda crudo igualmente (`decisiones-modelo-ownership.md`).
+- ~~Shape del bloque `ETF_Data`~~ ✅ (VTI, clave demo): holdings por símbolo sin ISIN ni importe; `World_Regions` puede sumar más de 100; ISIN del ETF en `ETF_Data.ISIN`, no en `General`.
 - Shape de la sección Earnings (campos, before/after market, estimado por periodo; que `fiscal_period_end` case con el de FUNDAMENTALS).
 - ~~Shape del endpoint/sección de noticias.~~ ✅ Verificado: etiqueta por símbolo EODHD crudo; se resuelve por el crosswalk de LISTING (ver `modelo-noticias.md`, P8).
 - **Cobertura de deslistadas (survivorship bias):** verificar qué profundidad de empresas que dejaron de cotizar da EODHD. Sin deslistadas, cualquier backtest sale artificialmente bueno. (Modelo ya preparado: `LISTING.status='delisted'` + `LISTING_TICKER_CHANGE`; falta confirmar que el proveedor las sirve.)
-- **Fecha de presentación en fundamentales (look-ahead bias):** confirmar que EODHD incluye la fecha real de publicación, no solo el cierre de periodo. (Modelo ya preparado: `FUNDAMENTALS.reported_at`; es lo que puebla ese campo con `reported_at_source='provider'` en vez del fallback `estimated`.)
+- ✅ *Verificado (clave demo): `Financials.*.quarterly[fecha].filing_date` existe (AAPL: periodo 2026-06-30, presentado 2026-07-31).* **Fecha de presentación en fundamentales (look-ahead bias):** confirmar que EODHD incluye la fecha real de publicación, no solo el cierre de periodo. (Modelo ya preparado: `FUNDAMENTALS.reported_at`; es lo que puebla ese campo con `reported_at_source='provider'` en vez del fallback `estimated`.)

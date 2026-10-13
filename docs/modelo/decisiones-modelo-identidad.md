@@ -55,6 +55,23 @@ Una SECURITY nueva necesita `company_id` (NOT NULL por trigger para acciones). �
 
 ---
 
+## 3.b Varias cotizaciones de una misma security y listing primario (P12, 2026-10-13)
+
+Verificado con `exchange-symbol-list/LSE`: 863 ISIN aparecen en dos o más símbolos (el mismo ETF en líneas de distinta divisa, p. ej. `ARKC` en GBX y `1ARG` en USD). La regla provisional D1 ("una security = un símbolo") se quedaba con el primero de la lista: arbitrario y con pérdida de cotizaciones reales. **Se sustituye:**
+
+- **Todas las cotizaciones se ingieren**: una `SECURITY` por ISIN y una `LISTING` por símbolo (§1). Es lo que ya pasaba con `BBBY_old`/`BBBYQ`. Precios cuelgan del listing; dividendos y fundamentales, de la security o la company, así que nada más cambia.
+- **Listing primario: regla determinista**, independiente del orden de la lista, aplicada en orden:
+  1. La bolsa del listing está en el país del prefijo del ISIN (mercado de origen). Si el prefijo no es un país (`XS`…) o no hay listing allí, se pasa a la siguiente.
+  2. `quote_currency` es la divisa de la bolsa (`EXCHANGE.default_currency`) o su subunidad (`GBX` cuenta como `GBP`, con la misma lista de subunidades de `decisiones-modelo.md` §6.a).
+  3. Desempate: el `provider_symbol` menor en orden alfabético.
+  - Listings sin `exchange_id` (venue sin mapear) no pueden ser primarios mientras haya otro con bolsa.
+- **Se recalcula en cada pasada** por security. Si un listing nuevo gana, el primario cambia y queda en `DIMENSION_AUDIT` (`LISTING` está auditada). En pasadas sin cambios, 0 filas nuevas.
+- **Un mismo ISIN con tipos de activo distintos** (acción y ETF, 4 grupos en Londres): no se ingiere ninguno y se emite `IDENTITY_RELINK_CONFLICT` agregado por payload. Es una contradicción del proveedor; se revisa a mano.
+- **Sin ISIN** (21 % de lo que está en alcance en Londres): fallback (MIC, ticker) del §1, una security por símbolo.
+- **Un listing `delisted` que vuelve a aparecer en la lista de activos no se reactiva solo**: el estado solo avanza de `active` a `delisted`, y la reaparición emite un finding para revisión (código provisional, ver `PLAN.md`).
+
+---
+
 ## 4. Anclado de holder: `SOURCE_HOLDER_MAP`
 
 Cierra el anclado de `holder_ref` que quedó abierto en el chunk de ownership. `holder_ref` puede ser intermitente (el proveedor lo da a veces); una vez visto para un holder, se fija.
