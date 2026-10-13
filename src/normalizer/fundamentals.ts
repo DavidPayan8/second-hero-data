@@ -4,6 +4,7 @@ import { PROVIDER } from '../eodhd/provider.js';
 import { emitFinding } from './findings.js';
 import { addDays, date, isObj, text, type Discarded } from './values.js';
 import { emptyEarningsCounts, writeEarnings, type EarningsCounts } from './earnings.js';
+import { isTrustedQuoteCurrencyCountry } from './currency-trust.js';
 import { emptyOwnershipCounts, writeOwnership, type OwnershipCounts } from './ownership.js';
 
 // Escritor de fundamentals/{symbol} (decisiones-modelo.md §2/§2.1, decisiones-modelo-etf.md, decisiones-modelo-taxonomia.md).
@@ -28,13 +29,6 @@ export const LINE_MAP = {
     cash: 'cash', total_equity: 'totalStockholderEquity', total_assets: 'totalAssets',
   },
 } as const;
-
-// ----------------------------------------------------------------------------------------------------------------------
-// Divisa de aum en ETF_SNAPSHOT (decisiones-modelo-etf.md §2.b, P15). TotalAssets no trae divisa. Solo si el listing PRIMARIO
-// cotiza en una bolsa de estos países (EXCHANGE.country_iso) se toma General.CurrencyCode; en el resto, aum y currency quedan
-// NULL hasta verificarlo con un ETF europeo. ÚNICO sitio.
-// ----------------------------------------------------------------------------------------------------------------------
-export const AUM_CURRENCY_COUNTRIES: readonly string[] = ['US'];
 const LINES = Object.values(LINE_MAP).flatMap((m) => Object.keys(m));
 const SECTIONS = Object.keys(LINE_MAP) as (keyof typeof LINE_MAP)[];
 
@@ -66,7 +60,7 @@ export interface FundamentalsSummary extends EarningsCounts, OwnershipCounts {
   sectorUnmapped: number;
   etfProfileChanged: number;
   etfSnapshotInserted: number;
-  etfSnapshotNoCurrency: number; // aum sin divisa verificable (listing primario fuera de AUM_CURRENCY_COUNTRIES): no se guarda
+  etfSnapshotNoCurrency: number; // aum sin divisa verificable (listing primario fuera de TRUSTED_QUOTE_CURRENCY_COUNTRIES): no se guarda
   etfHoldingsInserted: number;
   etfHoldingsUnchangedSets: number;
   etfHoldingsResolved: number; // constituent_security_id completado en un snapshot ya guardado
@@ -95,7 +89,7 @@ export async function writeFundamentals(input: FundamentalsInput): Promise<Funda
     const discarded: Discarded[] = [];
     if (l.requires_company) {
       if (!l.company_id) throw new Error(`${input.symbol}: security sin company`);
-      await writeStock(c, input, body, l.security_id, l.company_id, s, discarded);
+      await writeStock(c, input, body, l.security_id, l.company_id, l.country, s, discarded);
     } else {
       await writeEtf(c, input, body, l.security_id, l.country, s, discarded);
     }
@@ -112,7 +106,7 @@ export async function writeFundamentals(input: FundamentalsInput): Promise<Funda
 
 // ---------------------------------------------------------------------------------------------------------------- acciones
 
-async function writeStock(c: pg.PoolClient, input: FundamentalsInput, body: Record<string, unknown>, securityId: string, companyId: string, s: FundamentalsSummary, discarded: Discarded[]) {
+async function writeStock(c: pg.PoolClient, input: FundamentalsInput, body: Record<string, unknown>, securityId: string, companyId: string, country: string | null, s: FundamentalsSummary, discarded: Discarded[]) {
   const general = isObj(body.General) ? body.General : {};
   await mapSector(c, input, companyId, text(general.Sector), text(general.Industry), s);
 
@@ -167,7 +161,7 @@ async function writeStock(c: pg.PoolClient, input: FundamentalsInput, body: Reco
 
   // ---- calendario de resultados, ownership, analistas y short interest: bloques del mismo payload, por security
   await writeEarnings(c, securityId, body.Earnings, s, discarded);
-  await writeOwnership(c, securityId, body, input.fetchedDate, s, discarded);
+  await writeOwnership(c, securityId, body, input.fetchedDate, country, s, discarded);
 }
 
 async function mapSector(c: pg.PoolClient, input: FundamentalsInput, companyId: string, sector: string | null, industry: string | null, s: FundamentalsSummary) {
@@ -277,17 +271,18 @@ async function writeEtf(c: pg.PoolClient, input: FundamentalsInput, body: Record
   s.etfProfileChanged = p.rowCount ?? 0;
 
   // ---- ETF_SNAPSHOT: TotalAssets no trae fecha ni divisa; as_of_date = día de captura. La divisa (General.CurrencyCode) solo se da
-  // por buena si el listing primario cotiza en AUM_CURRENCY_COUNTRIES (P15); fuera, aum y currency NULL: no hay fila (limitación del proveedor, sin finding).
+  // por buena si el listing primario cotiza en TRUSTED_QUOTE_CURRENCY_COUNTRIES (P15); fuera, aum y currency NULL: no hay fila (limitación del proveedor, sin finding).
   const aum = text(etf.TotalAssets), currency = text(general.CurrencyCode);
   if (aum !== null) {
-    if (!country || !AUM_CURRENCY_COUNTRIES.includes(country)) s.etfSnapshotNoCurrency = 1;
+    if (!isTrustedQuoteCurrencyCountry(country)) s.etfSnapshotNoCurrency = 1;
     else if (!currency) discarded.push({ reason: 'TotalAssets sin divisa (General.CurrencyCode ausente)', detail: { TotalAssets: aum } });
     else {
       const last = (await c.query<{ same: boolean }>(
         `SELECT (aum, nav, currency, shares_outstanding_etf) IS NOT DISTINCT FROM ($2::numeric, NULL::numeric, $3::text, NULL::numeric) AS same
          FROM etf_snapshot WHERE security_id = $1 ORDER BY as_of_date DESC LIMIT 1`, [securityId, aum, currency])).rows[0];
       if (!last?.same) {
-        const r = await c.query('INSERT INTO etf_snapshot (security_id, as_of_date, aum, currency) VALUES ($1, $2, $3, $4) ON CONFLICT (security_id, as_of_date) DO NOTHING', [securityId, input.fetchedDate, aum, currency]);
+        // misma clave (mismo día) con otro valor: gana la última lectura, en silencio (decisiones-modelo.md 5.6)
+        const r = await c.query('INSERT INTO etf_snapshot (security_id, as_of_date, aum, currency) VALUES ($1, $2, $3, $4) ON CONFLICT (security_id, as_of_date) DO UPDATE SET aum = EXCLUDED.aum, currency = EXCLUDED.currency', [securityId, input.fetchedDate, aum, currency]);
         s.etfSnapshotInserted = r.rowCount ?? 0;
       }
     }

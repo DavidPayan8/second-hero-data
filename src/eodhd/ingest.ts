@@ -14,6 +14,11 @@ export interface CaptureOptions extends Partial<ClientOptions> {
   retryDelayMs?: number;
   sleep?: (ms: number) => Promise<void>;
   log?: (message: string) => void;
+  // Otro proveedor con el mismo mecanismo de captura (p. ej. la SEC para la 2ª fuente): su nombre en ingestion_run.provider, la
+  // función que hace la llamada de un trabajo (por defecto, EODHD con su token) y la pausa mínima entre llamadas (límite de peticiones).
+  provider?: string;
+  fetcher?: (job: Job) => Promise<FetchResult>;
+  minIntervalMs?: number;
 }
 
 export interface CaptureSummary {
@@ -87,22 +92,26 @@ export async function capture(scope: string, jobs: Job[], options: CaptureOption
   const retryDelayMs = options.retryDelayMs ?? config.retryDelayMs;
   const sleep = options.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const log = options.log ?? (() => {});
+  const provider = options.provider ?? PROVIDER;
+  const fetcher = options.fetcher ?? ((job: Job) => { const { path, query } = resolvePath(job); return fetchRaw(path, query, opts); });
+  const minIntervalMs = options.minIntervalMs ?? 0;
+  let lastCallAt = 0;
 
   const lockClient: pg.PoolClient = await pool.connect();
   let runId: string | undefined;
   let finished = false;
   try {
-    const lock = await lockClient.query<{ ok: boolean }>('SELECT pg_try_advisory_lock(hashtextextended($1, 0)) AS ok', [`ingest:${PROVIDER}:${scope}`]);
+    const lock = await lockClient.query<{ ok: boolean }>('SELECT pg_try_advisory_lock(hashtextextended($1, 0)) AS ok', [`ingest:${provider}:${scope}`]);
     if (!lock.rows[0]!.ok) throw new Error(`Ya hay una corrida en marcha para el scope ${scope}`);
 
     const stale = await pool.query(
       "UPDATE ingestion_run SET status = 'failed', finished_at = now() WHERE provider = $1 AND scope = $2 AND status = 'running'",
-      [PROVIDER, scope],
+      [provider, scope],
     );
     const closedStale = stale.rowCount ?? 0;
     if (closedStale) log(`Cerradas como failed ${closedStale} corridas colgadas del scope ${scope}`);
 
-    runId = (await pool.query<{ id: string }>('INSERT INTO ingestion_run (provider, scope) VALUES ($1, $2) RETURNING ingestion_run_id AS id', [PROVIDER, scope])).rows[0]!.id;
+    runId = (await pool.query<{ id: string }>('INSERT INTO ingestion_run (provider, scope) VALUES ($1, $2) RETURNING ingestion_run_id AS id', [provider, scope])).rows[0]!.id;
 
     let spent = 0;
     let attempts = 0;
@@ -112,10 +121,11 @@ export async function capture(scope: string, jobs: Job[], options: CaptureOption
     let stoppedBy: CaptureSummary['stoppedBy'];
 
     jobLoop: for (const job of jobs) {
-      const { path, query } = resolvePath(job);
       for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         if (spent + job.cost > budget) { stoppedBy = 'budget'; break jobLoop; }
-        const result = await fetchRaw(path, query, opts);
+        if (minIntervalMs > 0) { const wait = lastCallAt + minIntervalMs - Date.now(); if (wait > 0) await sleep(wait); }
+        lastCallAt = Date.now();
+        const result = await fetcher(job);
         spent += job.cost;
         attempts++;
         await recordAttempt(runId, job, result);
@@ -142,7 +152,7 @@ export async function capture(scope: string, jobs: Job[], options: CaptureOption
     if (runId && !finished) {
       await pool.query("UPDATE ingestion_run SET status = 'failed', finished_at = now() WHERE ingestion_run_id = $1 AND status = 'running'", [runId]).catch(() => {});
     }
-    await lockClient.query('SELECT pg_advisory_unlock(hashtextextended($1, 0))', [`ingest:${PROVIDER}:${scope}`]).catch(() => {});
+    await lockClient.query('SELECT pg_advisory_unlock(hashtextextended($1, 0))', [`ingest:${provider}:${scope}`]).catch(() => {});
     lockClient.release();
   }
 }

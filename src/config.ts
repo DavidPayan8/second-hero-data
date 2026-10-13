@@ -9,4 +9,7 @@ export const config = {
   timeoutMs: Number(process.env.EODHD_TIMEOUT_MS ?? 30_000),
   maxAttempts: Number(process.env.EODHD_MAX_ATTEMPTS ?? 1),
   retryDelayMs: Number(process.env.EODHD_RETRY_DELAY_MS ?? 2_000),
+  // 2ª fuente: la SEC (data.sec.gov, sin token). Exige un User-Agent con nombre y contacto (SEC_USER_AGENT en .env).
+  secUserAgent: (process.env.SEC_USER_AGENT ?? '').trim(),
+  secBase: 'https://data.sec.gov',
 };

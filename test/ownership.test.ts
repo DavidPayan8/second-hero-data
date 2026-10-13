@@ -31,13 +31,13 @@ async function fundamentals(symbol: string, body: unknown, fetchedAt = '2026-10-
     [runId, 'fundamentals/{symbol}', symbol, '{}', hash, fetchedAt],
   )).rows[0]!.id;
 }
-async function makeStock(symbol: string) {
+async function makeStock(symbol: string, mic: string | null = null) {
   const company = (await pool.query<{ id: string }>("INSERT INTO company (legal_name, cik, identity_source) VALUES ($1, $2, 'cik') RETURNING company_id AS id", [`Empresa ${symbol}`, `cik-${symbol}`])).rows[0]!.id;
   const security = (await pool.query<{ id: string }>("INSERT INTO security (company_id, asset_type_id) VALUES ($1, (SELECT asset_type_id FROM asset_type WHERE code = 'common_stock')) RETURNING security_id AS id", [company])).rows[0]!.id;
-  await pool.query("INSERT INTO listing (security_id, ticker, provider_symbol, quote_currency, status, is_primary_listing) VALUES ($1, $2, $3, 'USD', 'active', true)", [security, symbol.split('.')[0], symbol]);
+  await pool.query("INSERT INTO listing (security_id, exchange_id, ticker, provider_symbol, quote_currency, status, is_primary_listing) VALUES ($1, (SELECT exchange_id FROM exchange WHERE mic = $4), $2, $3, 'USD', 'active', true)", [security, symbol.split('.')[0], symbol, mic]);
   return { security };
 }
-const body = (extra: Record<string, unknown> = {}) => ({ General: { Code: 'X', Type: 'Common Stock', UpdatedAt: '2026-10-11' }, ...extra });
+const body = (extra: Record<string, unknown> = {}) => ({ General: { Code: 'X', Type: 'Common Stock', UpdatedAt: '2026-10-11', CurrencyCode: 'USD' }, ...extra });
 const findings = async (rule: string) => (await pool.query('SELECT target_table, target_key, detail FROM data_quality_finding WHERE rule_code = $1 ORDER BY finding_id', [rule])).rows;
 const count = async (table: string) => (await pool.query<{ n: number }>(`SELECT count(*)::int AS n FROM ${table}`)).rows[0]!.n;
 
@@ -104,7 +104,7 @@ describe('ANALYST_CONSENSUS, OWNERSHIP_SNAPSHOT y SHORT_INTEREST', () => {
   const ratings = (over: Record<string, unknown> = {}) => ({ Rating: 3.7955, TargetPrice: 328.0938, StrongBuy: 19, Buy: 6, Hold: 13, Sell: 3, StrongSell: 3, ...over });
   const stats = (over: Record<string, unknown> = {}) => ({ SharesOutstanding: 14594180000, SharesFloat: 14568786127, PercentInsiders: 1.648, PercentInstitutions: 66.325, SharesShort: null, SharesShortPriorMonth: null, ...over });
 
-  test('consenso: rating_mean crudo y cinco recuentos; el precio objetivo no trae divisa, así que queda NULL (y se cuenta)', async () => {
+  test('consenso: rating_mean crudo y cinco recuentos; sin bolsa de EEUU el precio objetivo queda NULL (y se cuenta)', async () => {
     await makeStock('EAD.US');
     await fundamentals('EAD.US', body({ AnalystRatings: ratings() }));
     const out = await replay();
@@ -112,6 +112,32 @@ describe('ANALYST_CONSENSUS, OWNERSHIP_SNAPSHOT y SHORT_INTEREST', () => {
     expect((await pool.query(
       'SELECT as_of_date::text AS d, rating_mean::text AS r, num_analysts, strong_buy, buy, hold, sell, strong_sell, target_mean, target_low, target_high, target_currency FROM analyst_consensus')).rows)
       .toEqual([{ d: '2026-10-12', r: '3.7955', num_analysts: null, strong_buy: 19, buy: 6, hold: 13, sell: 3, strong_sell: 3, target_mean: null, target_low: null, target_high: null, target_currency: null }]);
+  });
+
+  test('P17: el precio objetivo se guarda con General.CurrencyCode solo si el listing primario cotiza en EEUU; en Londres queda NULL', async () => {
+    await makeStock('EAQ.US', 'XNAS');
+    await makeStock('EAR.LSE', 'XLON');
+    await fundamentals('EAQ.US', body({ AnalystRatings: ratings() }));
+    await fundamentals('EAR.LSE', { ...body({ AnalystRatings: ratings() }), General: { Code: 'R', UpdatedAt: '2026-10-11', CurrencyCode: 'GBX' } });
+    const out = await replay();
+    expect(out.fundamentals).toMatchObject({ analystInserted: 2, analystTargetNoCurrency: 1, discarded: 0 });
+    expect((await pool.query('SELECT l.provider_symbol AS s, target_mean::text AS t, target_currency AS c FROM analyst_consensus a JOIN listing l USING (security_id) ORDER BY 1')).rows)
+      .toEqual([{ s: 'EAQ.US', t: '328.0938', c: 'USD' }, { s: 'EAR.LSE', t: null, c: null }]);
+  });
+
+  test('5.6: la corrección del mismo día se aplica en silencio (analistas, ownership, short interest) y un dato vacío no borra el guardado', async () => {
+    await makeStock('EAS.US', 'XNAS');
+    const b = (r: Record<string, unknown>, st: Record<string, unknown>, tech: Record<string, unknown>) => body({ AnalystRatings: ratings(r), SharesStats: stats(st), Technicals: tech });
+    await fundamentals('EAS.US', b({ TargetPrice: null }, {}, { SharesShort: 100, SharesShortPriorMonth: 90 }));
+    await replay();
+    // mismo día: el proveedor completa el objetivo, corrige el free float y el short interest
+    await fundamentals('EAS.US', b({ TargetPrice: 330 }, { SharesFloat: 14000000000 }, { SharesShort: 110, SharesShortPriorMonth: null }));
+    const out = await replay();
+    expect(out.fundamentals).toMatchObject({ analystInserted: 0, analystUpdated: 1, ownershipSnapshotUpdated: 1, shortInterestUpdated: 1 });
+    expect((await pool.query('SELECT target_mean::text AS t, target_currency AS c FROM analyst_consensus')).rows).toEqual([{ t: '330', c: 'USD' }]);
+    expect((await pool.query('SELECT shares_float::text AS f FROM ownership_snapshot')).rows).toEqual([{ f: '14000000000' }]);
+    expect((await pool.query('SELECT shares_short::text AS s, shares_short_prior_month::text AS p FROM short_interest')).rows).toEqual([{ s: '110', p: '90' }]); // el mes anterior vacío no borra
+    expect(await count('data_quality_finding')).toBe(0);
   });
 
   test('deduplicado por valor: el mismo consenso otro día no inserta; si cambia, fila nueva con su fecha y la anterior se conserva', async () => {
@@ -178,7 +204,7 @@ describe('HOLDER_POSITION e INSIDER_TRANSACTION', () => {
     const { security } = await makeStock('EAK.US');
     await fundamentals('EAK.US', body({ Holders: holders([h('BlackRock Inc')], [h('Vanguard MStar Total Stk Mkt Idx Invest', { date: '2026-08-31', currentShares: 466773438, totalAssets: 6.3032 })]) }));
     const out = await replay();
-    expect(out.fundamentals).toMatchObject({ holdersInserted: 2, holdersExisting: 0, holdersConflicting: 0, discarded: 0 });
+    expect(out.fundamentals).toMatchObject({ holdersInserted: 2, holdersUpdated: 0, holdersExisting: 0, discarded: 0 });
     expect((await pool.query('SELECT holder_ref, holder_name, holder_type, as_of_date::text AS d, shares_held::text AS s, portfolio_weight_pct::text AS w FROM holder_position ORDER BY holder_type DESC')).rows).toEqual([
       { holder_ref: null, holder_name: 'BlackRock Inc', holder_type: 'institution', d: '2026-06-30', s: '1162996939', w: '5.0007' },
       { holder_ref: null, holder_name: 'Vanguard MStar Total Stk Mkt Idx Invest', holder_type: 'fund', d: '2026-08-31', s: '466773438', w: '6.3032' },
@@ -188,17 +214,19 @@ describe('HOLDER_POSITION e INSIDER_TRANSACTION', () => {
     expect(await count('holder_position')).toBe(2);
   });
 
-  test('el nombre se compara normalizado (otra forma del mismo nombre, misma fecha = misma posición); una fecha nueva es una fila nueva; el número distinto en la misma clave se cuenta pero no se corrige', async () => {
+  test('el nombre se compara normalizado (otra forma del mismo nombre, misma fecha = misma posición); una fecha nueva es una fila nueva; el número distinto en la misma clave se corrige en silencio (gana la última lectura)', async () => {
     await makeStock('EAL.US');
     await fundamentals('EAL.US', body({ Holders: holders([h('BlackRock Inc')]) }));
     await replay();
     await fundamentals('EAL.US', body({ Holders: holders([h('BlackRock, Inc.', { currentShares: 1 })]) }), '2026-10-13T10:00:00Z');
     let out = await replay();
-    expect(out.fundamentals).toMatchObject({ holdersInserted: 0, holdersExisting: 1, holdersConflicting: 1 });
+    expect(out.fundamentals).toMatchObject({ holdersInserted: 0, holdersUpdated: 1, holdersExisting: 0 });
+    expect((await pool.query('SELECT holder_name AS n, shares_held::text AS s FROM holder_position')).rows).toEqual([{ n: 'BlackRock, Inc.', s: '1' }]);
+    expect(await count('data_quality_finding')).toBe(0);
     await fundamentals('EAL.US', body({ Holders: holders([h('BlackRock, Inc.', { date: '2026-09-30', currentShares: 1200000000 })]) }), '2026-10-27T10:00:00Z');
     out = await replay();
     expect(out.fundamentals).toMatchObject({ holdersInserted: 1 });
-    expect((await pool.query('SELECT as_of_date::text AS d, shares_held::text AS s FROM holder_position ORDER BY 1')).rows).toEqual([{ d: '2026-06-30', s: '1162996939' }, { d: '2026-09-30', s: '1200000000' }]);
+    expect((await pool.query('SELECT as_of_date::text AS d, shares_held::text AS s FROM holder_position ORDER BY 1')).rows).toEqual([{ d: '2026-06-30', s: '1' }, { d: '2026-09-30', s: '1200000000' }]);
   });
 
   test('holder sin nombre, fecha o acciones: no se crea y FUNDAMENTALS_INCOMPLETE guarda el motivo; HOLDER_UNMAPPED está apagada y no se emite', async () => {
@@ -219,21 +247,32 @@ describe('HOLDER_POSITION e INSIDER_TRANSACTION', () => {
     await fundamentals('EAN.US', body({ InsiderTransactions: insiders(tx('Ana'), tx('Ana', { transactionCode: 'P', transactionAmount: 100 }), tx('Ana')) }));
     const out = await replay();
     expect(out.fundamentals).toMatchObject({ insidersInserted: 2, insidersExisting: 1, discarded: 0 });
-    expect((await pool.query('SELECT provider_txn_id, insider_name, transaction_date::text AS d, transaction_code AS c, shares_transacted::text AS n, price_per_share::text AS p, shares_owned_after, relationship FROM insider_transaction ORDER BY transaction_code')).rows).toEqual([
-      { provider_txn_id: null, insider_name: 'Ana', d: '2026-03-30', c: 'P', n: '100', p: '359.33', shares_owned_after: null, relationship: null },
-      { provider_txn_id: null, insider_name: 'Ana', d: '2026-03-30', c: 'S', n: '25809', p: '359.33', shares_owned_after: null, relationship: null },
+    expect((await pool.query('SELECT provider_txn_id, insider_name, transaction_date::text AS d, transaction_code AS c, shares_transacted::text AS n, price_per_share::text AS p, shares_owned_after, relationship, acquired_disposed AS ad FROM insider_transaction ORDER BY transaction_code')).rows).toEqual([
+      { provider_txn_id: null, insider_name: 'Ana', d: '2026-03-30', c: 'P', n: '100', p: '359.33', shares_owned_after: null, relationship: null, ad: 'D' },
+      { provider_txn_id: null, insider_name: 'Ana', d: '2026-03-30', c: 'S', n: '25809', p: '359.33', shares_owned_after: null, relationship: null, ad: 'D' },
     ]);
     expect((await replay({ all: true })).fundamentals).toMatchObject({ insidersInserted: 0, insidersExisting: 3 });
     expect(await count('insider_transaction')).toBe(2);
   });
 
-  test('transacción sin transactionAmount (en los payloads reales, filas sin secLink): no se crea y FUNDAMENTALS_INCOMPLETE las guarda; el payload sigue ok', async () => {
+  test('5.6: transacción sin transactionAmount (laguna sistemática, filas sin secLink): no se crea, se cuenta y NO hay finding; el sentido A/D se guarda tal cual', async () => {
     await makeStock('EAO.US');
-    await fundamentals('EAO.US', body({ InsiderTransactions: insiders(tx('Ana'), tx('Ro', { transactionCode: 'P', transactionAmount: null, secLink: null })) }));
+    await fundamentals('EAO.US', body({ InsiderTransactions: insiders(tx('Ana', { transactionCode: 'M', transactionAcquiredDisposed: 'A' }), tx('Ro', { transactionCode: 'P', transactionAmount: null, secLink: null })) }));
     const out = await replay();
     expect(out).toMatchObject({ checked: 1, ok: 1, error: 0 });
-    expect(out.fundamentals).toMatchObject({ insidersInserted: 1, discarded: 1 });
-    expect((await findings('FUNDAMENTALS_INCOMPLETE'))[0]!.detail.items).toEqual([{ reason: 'transacción de insider sin transactionAmount', detail: { ownerName: 'Ro', transactionDate: '2026-03-30', transactionCode: 'P' } }]);
+    expect(out.fundamentals).toMatchObject({ insidersInserted: 1, insidersNoAmount: 1, discarded: 0 });
+    expect(await count('data_quality_finding')).toBe(0);
+    expect((await pool.query('SELECT transaction_code AS c, acquired_disposed AS ad FROM insider_transaction')).rows).toEqual([{ c: 'M', ad: 'A' }]);
+  });
+
+  test('5.6: misma transacción con otro precio u otro sentido: gana la última lectura; un dato vacío no borra el guardado', async () => {
+    await makeStock('EAT.US');
+    await fundamentals('EAT.US', body({ InsiderTransactions: insiders(tx('Ana')) }));
+    await replay();
+    await fundamentals('EAT.US', body({ InsiderTransactions: insiders(tx('Ana', { transactionPrice: 360, transactionAcquiredDisposed: null, postTransactionAmount: 5000 })) }));
+    const out = await replay({ all: true });
+    expect(out.fundamentals).toMatchObject({ insidersInserted: 0, insidersUpdated: 1 });
+    expect((await pool.query('SELECT price_per_share::text AS p, shares_owned_after::text AS a, acquired_disposed AS ad FROM insider_transaction')).rows).toEqual([{ p: '360', a: '5000', ad: 'D' }]);
   });
 
   test('un InsiderTransactions vacío ({}) no escribe nada ni falla', async () => {
