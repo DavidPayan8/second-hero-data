@@ -196,7 +196,7 @@ Especificación: `decisiones-modelo-ingesta.md`, `-referencia`, `-identidad`, `-
 
 ## Fase 4 — Validación
 
-**Estado (2026-10-13):** implementado en `src/validation/` (`runner.ts`, `emit.ts`, `rules.ts`, `secSecondSource.ts`, tolerancias en `config.ts`, D5) y `src/sec/`. Comandos: `npm run validate` (reglas activas del catálogo) y `npm run sec-capture` (companyfacts de la SEC, exige `SEC_USER_AGENT` real en `.env`). Falta la prueba con un payload real de la SEC (ver `docs/registro.md`). `ACCOUNTING_BALANCE` sigue apagada.
+**Estado (2026-10-13):** implementado en `src/validation/` (`runner.ts`, `emit.ts`, `rules.ts`, `secSecondSource.ts`, tolerancias en `config.ts`, D5) y `src/sec/`. Comandos: `npm run validate` (reglas activas del catálogo) y `npm run sec-capture` (companyfacts de la SEC, exige `SEC_USER_AGENT` real en `.env`). Falta la prueba con un payload real de la SEC (ver `docs/registro.md`). `ACCOUNTING_BALANCE` sigue apagada hasta calibrarla con el plan de pago. Cierre automático (2026-10-13, `decisiones-modelo-validacion.md` §7): en una pasada completa el runner cierra como `dismissed` (`resolved_by = 'runner'`) los findings de las reglas de estado cuyo objetivo ya no cumple la condición; las pasadas parciales y los findings del normalizador no se cierran solos. `YOY_JUMP` solo mira `period_end` de los últimos 3 años (`yoyRecentYears`).
 
 Especificación: `decisiones-modelo-validacion.md`. El runner lee las reglas `enabled` de `VALIDATION_RULE` y ejecuta la lógica en código indexada por `rule_code`. No duplica findings abiertos para la misma regla y objetivo.
 
