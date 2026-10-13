@@ -112,43 +112,80 @@ describe('escritor de precios brutos', () => {
   });
 });
 
-describe('el precio bruto es inmutable (D9, provisional)', () => {
-  test('una fecha con otro valor no se sobrescribe y emite PRICE_REVISED con el valor guardado y el nuevo', async () => {
+describe('revisiones del proveedor (P13)', () => {
+  // seis sesiones: la ventana de volumen son las 5 últimas, así que 2026-10-02 queda fuera
+  const six = (over: Record<string, Record<string, unknown>> = {}) =>
+    ['2026-10-02', '2026-10-05', '2026-10-06', '2026-10-07', '2026-10-08', '2026-10-09'].map((d) => bar(d, 100, over[d] ?? {}));
+
+  test('caso real AAPL 2026-10-09: cambia solo el volumen de una sesión reciente -> se actualiza, sin finding', async () => {
     const l = await makeListing('EEE.US');
-    await eod('EEE.US', [bar('2026-10-08', 100), bar('2026-10-09', 101)]);
+    await eod('EEE.US', [bar('2026-10-09', '214.2300', { volume: 37821157 })]);
     await replay();
-    await eod('EEE.US', [bar('2026-10-08', 100), bar('2026-10-09', 150, { volume: 5 })]); // el proveedor "corrige" el 9
+    await eod('EEE.US', [bar('2026-10-09', '214.2300', { volume: 37881200 })]);
     const out = await replay({ all: true });
-    expect(out.prices).toMatchObject({ inserted: 0, unchanged: 1, revised: 1 });
-    expect((await prices(l)).find((r) => r.date === '2026-10-09')).toMatchObject({ close: '101', volume: '1000' }); // se conserva el guardado
+    expect(out.prices).toMatchObject({ inserted: 0, unchanged: 0, revised: 0, settled: 1 });
+    expect((await prices(l))[0]).toMatchObject({ date: '2026-10-09', close: '214.2300', volume: '37881200' });
+    expect(await findings()).toHaveLength(0);
+  });
+
+  test('cambia el close -> se actualiza y emite PRICE_REVISED {old, new} sobre {listing_id, date}', async () => {
+    const l = await makeListing('EEF.US');
+    await eod('EEF.US', six());
+    await replay();
+    await eod('EEF.US', six({ '2026-10-09': { close: 150, volume: 5 } }));
+    const out = await replay({ all: true });
+    expect(out.prices).toMatchObject({ inserted: 0, unchanged: 5, revised: 1, settled: 0 });
+    expect((await prices(l)).find((r) => r.date === '2026-10-09')).toMatchObject({ close: '150', volume: '5' });
     const f = await findings();
     expect(f).toHaveLength(1);
     expect(f[0]).toMatchObject({
       target_table: 'prices_daily', target_key: { listing_id: Number(l), date: '2026-10-09' }, severity: 'warning', status: 'open',
-      detail: { stored: { open: 101, high: 101, low: 101, close: 101, volume: 1000 }, incoming: { open: 150, high: 150, low: 150, close: 150, volume: 5 } },
+      detail: { old: { open: 100, high: 100, low: 100, close: 100, volume: 1000 }, new: { open: 100, high: 100, low: 100, close: 150, volume: 5 } },
     });
   });
 
-  test('repetir no duplica el finding; uno aceptado con el mismo detail no se reabre; con otro valor nuevo se actualiza el abierto', async () => {
+  test('cambia solo el volumen fuera de las 5 últimas sesiones -> se actualiza y emite PRICE_REVISED', async () => {
+    const l = await makeListing('EEG.US');
+    await eod('EEG.US', six());
+    await replay();
+    await eod('EEG.US', six({ '2026-10-02': { volume: 7 }, '2026-10-05': { volume: 8 } })); // 10-05 está dentro (silencio), 10-02 fuera
+    const out = await replay({ all: true });
+    expect(out.prices).toMatchObject({ revised: 1, settled: 1 });
+    expect((await prices(l)).map((r) => r.volume)).toEqual(['7', '8', '1000', '1000', '1000', '1000']);
+    expect((await findings()).map((x) => x.target_key.date)).toEqual(['2026-10-02']);
+  });
+
+  test('un segundo cambio con el finding abierto conserva el old original y actualiza el new', async () => {
     const l = await makeListing('FFF.US');
     await eod('FFF.US', [bar('2026-10-09', 101)]);
     await replay();
     await eod('FFF.US', [bar('2026-10-09', 150)]);
     await replay({ all: true });
+    await eod('FFF.US', [bar('2026-10-09', 175)]);
     await replay({ all: true });
+    const f = await findings();
+    expect(f).toHaveLength(1);
+    expect(f[0]!.detail).toMatchObject({ old: { close: 101 }, new: { close: 175 } });
+    expect((await prices(l))[0]).toMatchObject({ close: '175' });
+  });
+
+  test('el mismo payload dos veces -> 0 cambios; un finding aceptado con el mismo detail no se reabre', async () => {
+    const l = await makeListing('FFG.US');
+    await eod('FFG.US', [bar('2026-10-09', 101)]);
+    await replay();
+    await eod('FFG.US', [bar('2026-10-09', 150)]);
+    await replay({ all: true });
+    const again = await replay({ all: true });
+    expect(again.prices).toMatchObject({ inserted: 0, revised: 0, settled: 0, unchanged: 1 });
     expect(await findings()).toHaveLength(1);
     await pool.query("UPDATE data_quality_finding SET status = 'accepted', resolved_at = now(), resolved_by = 'david'");
     await replay({ all: true });
     expect(await findings()).toHaveLength(1);
     expect((await findings())[0]).toMatchObject({ status: 'accepted' });
-    await eod('FFF.US', [bar('2026-10-09', 175)]); // otro valor: es un hecho nuevo
-    await replay({ all: true });
-    const f = await findings();
-    expect(f.map((x) => x.status)).toEqual(['accepted', 'open']);
-    expect((await prices(l))[0]).toMatchObject({ close: '101' });
+    expect((await prices(l))[0]).toMatchObject({ close: '150' });
   });
 
-  test('una regla apagada no emite el finding pero tampoco sobrescribe', async () => {
+  test('una regla apagada no emite el finding pero la revisión se acepta', async () => {
     const l = await makeListing('GGG.US');
     await eod('GGG.US', [bar('2026-10-09', 101)]);
     await replay();
@@ -158,7 +195,7 @@ describe('el precio bruto es inmutable (D9, provisional)', () => {
       const out = await replay({ all: true });
       expect(out.prices).toMatchObject({ revised: 1 });
       expect(await findings()).toHaveLength(0);
-      expect((await prices(l))[0]).toMatchObject({ close: '101' });
+      expect((await prices(l))[0]).toMatchObject({ close: '150' });
     } finally {
       await pool.query("UPDATE validation_rule SET enabled = true WHERE rule_code = 'PRICE_REVISED'");
     }

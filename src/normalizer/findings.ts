@@ -9,6 +9,9 @@ export interface FindingInput {
   // Determinista sobre los datos: los valores evaluados, nunca la fecha del pase ni contadores que crecen solos.
   detail: Record<string, unknown> | null;
   detectedByRun?: string | null;
+  // Para findings con detail { old, new } (CORPORATE_EVENT_CHANGED, PRICE_REVISED): si ya hay uno abierto, se conserva su `old`
+  // (el valor anterior a la primera corrección) y solo se actualiza `new`.
+  keepFirstOld?: boolean;
 }
 
 // Emite un finding siguiendo las reglas de decisiones-modelo-validacion.md §6:
@@ -22,7 +25,14 @@ export async function emitFinding(c: pg.PoolClient, f: FindingInput): Promise<Fi
   if (!rule) throw new Error(`Regla de validación no catalogada: ${f.ruleCode}`);
   if (!rule.enabled) return 'disabled';
   const key = JSON.stringify(f.targetKey);
-  const detail = f.detail === null ? null : JSON.stringify(f.detail);
+  let detailObj = f.detail;
+  if (f.keepFirstOld && detailObj) {
+    const open = await c.query<{ detail: { old?: unknown } | null }>(
+      "SELECT detail FROM data_quality_finding WHERE rule_code = $1 AND target_table = $2 AND target_key = $3::jsonb AND status = 'open'", [f.ruleCode, f.targetTable, key]);
+    const first = open.rows[0]?.detail;
+    if (first && first.old !== undefined) detailObj = { ...detailObj, old: first.old };
+  }
+  const detail = detailObj === null ? null : JSON.stringify(detailObj);
 
   const closed = await c.query(
     `SELECT 1 FROM data_quality_finding

@@ -33,22 +33,29 @@ export interface PricesSummary {
   rows: number;
   inserted: number;
   unchanged: number;
-  revised: number; // ya había un precio distinto para esa fecha: se conserva el guardado y se avisa
+  revised: number; // ya había un precio distinto: se actualiza y se emite PRICE_REVISED
+  settled: number; // solo cambió el volumen de una de las últimas sesiones: se actualiza en silencio
   skippedNoClose: number;
   skippedBadDate: number;
   skippedDuplicate: number;
   noListing: number; // listing aún inexistente: el payload queda pendiente y se reintenta
 }
 
-export const emptyPricesSummary = (): PricesSummary => ({ payloads: 0, rows: 0, inserted: 0, unchanged: 0, revised: 0, skippedNoClose: 0, skippedBadDate: 0, skippedDuplicate: 0, noListing: 0 });
+export const emptyPricesSummary = (): PricesSummary => ({ payloads: 0, rows: 0, inserted: 0, unchanged: 0, revised: 0, settled: 0, skippedNoClose: 0, skippedBadDate: 0, skippedDuplicate: 0, noListing: 0 });
+
+// P13 (decisiones-modelo.md §5): un cambio SOLO de volume en las últimas N sesiones del listing es el asentamiento normal del
+// volumen consolidado y se acepta en silencio. N = 5 es provisional y vive solo aquí.
+export const VOLUME_SETTLE_SESSIONS = 5;
 
 const num = (v: unknown): string | null => (v === null || v === undefined || v === '' ? null : String(v));
 
 // Escritor de precios brutos (eod/{symbol} -> PRICES_DAILY). Solo open, high, low, close y volume en la unidad del proveedor, sin
-// tocar (la divisa es LISTING.quote_currency; GBX se queda en GBX). El precio es inmutable (decisiones-modelo.md §5): una
-// fecha que ya existe no se sobrescribe. Si el proveedor la trae con otro valor, se conserva el guardado y se emite
-// PRICE_REVISED (D9, provisional) con el valor guardado y el nuevo, para revisión. Idempotente: repetirlo no cambia nada.
-// Devuelve null si el listing todavía no existe: el payload se queda pendiente en lugar de perderse.
+// tocar (la divisa es LISTING.quote_currency; GBX se queda en GBX). "Inmutable" significa que nosotros no reescribimos el bruto;
+// el proveedor sí puede corregirlo (P13, D9 sustituida): una revisión se ACEPTA (UPDATE de la fila).
+//  - Cambia solo volume y la fecha está entre las VOLUME_SETTLE_SESSIONS últimas sesiones del listing: en silencio.
+//  - Cambia open/high/low/close, o volume fuera de esa ventana: UPDATE + PRICE_REVISED {old, new}; si ya hay uno abierto se
+//    conserva el `old` del primero.
+// Idempotente: repetirlo no cambia nada. Devuelve null si el listing todavía no existe: el payload se queda pendiente.
 export async function writePrices(input: PricesInput): Promise<PricesSummary | null> {
   return withActor('normalizer', `precios desde raw_payload ${input.rawPayloadId}`, async (c) => {
     const listing = (await c.query<{ id: string }>('SELECT listing_id AS id FROM listing WHERE provider_symbol = $1', [input.symbol])).rows[0];
@@ -77,22 +84,33 @@ export async function writePrices(input: PricesInput): Promise<PricesSummary | n
        SELECT $1::bigint, i.date, i.open, i.high, i.low, i.close, i.volume FROM ${incoming} ON CONFLICT (listing_id, date) DO NOTHING`, args);
     s.inserted = ins.rowCount ?? 0;
 
-    // Fechas que ya existían con otros valores (la comparación es numérica: 214.2300 y 214.23 son lo mismo).
-    const rev = await c.query<{ date: string; old: Record<string, string | null>; new: Record<string, string | null> }>(
+    // Fechas que ya existían con otros valores (la comparación es numérica: 214.2300 y 214.23 son lo mismo). La ventana de
+    // "últimas sesiones" se mide sobre las fechas guardadas del listing, ya con lo recién insertado.
+    const rev = await c.query<{ date: string; old: Record<string, string | null>; new: Record<string, string | null>; only_volume: boolean; recent: boolean }>(
       `SELECT i.date::text AS date,
               jsonb_build_object('open', p.open, 'high', p.high, 'low', p.low, 'close', p.close, 'volume', p.volume) AS old,
-              jsonb_build_object('open', i.open, 'high', i.high, 'low', i.low, 'close', i.close, 'volume', i.volume) AS new
+              jsonb_build_object('open', i.open, 'high', i.high, 'low', i.low, 'close', i.close, 'volume', i.volume) AS new,
+              (p.open, p.high, p.low, p.close) IS NOT DISTINCT FROM (i.open, i.high, i.low, i.close) AS only_volume,
+              p.date IN (SELECT date FROM prices_daily WHERE listing_id = $1::bigint ORDER BY date DESC LIMIT ${VOLUME_SETTLE_SESSIONS}) AS recent
        FROM ${incoming} JOIN prices_daily p ON p.listing_id = $1::bigint AND p.date = i.date
        WHERE (p.open, p.high, p.low, p.close, p.volume) IS DISTINCT FROM (i.open, i.high, i.low, i.close, i.volume)
        ORDER BY i.date`, args);
-    s.revised = rev.rowCount ?? 0;
-    s.unchanged = dates.length - s.inserted - s.revised;
+    s.unchanged = dates.length - s.inserted - (rev.rowCount ?? 0);
+    if (rev.rowCount) {
+      await c.query(
+        `UPDATE prices_daily p SET open = i.open, high = i.high, low = i.low, close = i.close, volume = i.volume
+         FROM ${incoming} WHERE p.listing_id = $1::bigint AND p.date = i.date
+           AND (p.open, p.high, p.low, p.close, p.volume) IS DISTINCT FROM (i.open, i.high, i.low, i.close, i.volume)`, args);
+    }
     for (const r of rev.rows) {
+      if (r.only_volume && r.recent) { s.settled++; continue; }
+      s.revised++;
       await emitFinding(c, {
         ruleCode: 'PRICE_REVISED', targetTable: 'prices_daily', targetKey: { listing_id: Number(listing.id), date: r.date },
-        detail: { stored: r.old, incoming: r.new }, detectedByRun: input.runId,
+        detail: { old: r.old, new: r.new }, detectedByRun: input.runId, keepFirstOld: true,
       });
     }
     return s;
   });
 }
+
