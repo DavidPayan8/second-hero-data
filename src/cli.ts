@@ -26,8 +26,11 @@ try {
     }
   } else if (cmd === 'replay') {
     const s = await replay({ runId: flag('run'), all: args.includes('--all') });
-    console.log(`Replay: ${s.checked} filas revisadas, ${s.ok} ok, ${s.error} con error${s.deferred ? `, ${s.deferred} pendientes (precios sin listing)` : ''}.`);
+    console.log(`Replay: ${s.checked} filas revisadas, ${s.ok} ok, ${s.error} con error${s.deferred ? `, ${s.deferred} pendientes (sin listing todavía)` : ''}.`);
     if (s.prices) console.log('Precios:', JSON.stringify(s.prices));
+    if (s.dividends) console.log('Dividendos:', JSON.stringify(s.dividends));
+    if (s.splits) console.log('Splits:', JSON.stringify(s.splits));
+    if (s.fx) console.log('FX:', JSON.stringify(s.fx));
     if (s.listings) console.log(`Listings (${s.listingsSweeps} pasada${s.listingsSweeps === 1 ? '' : 's'}):`, JSON.stringify(s.listings));
   } else {
     console.log('Uso:\n  npm run capture -- --scope=symbols:LSE [--symbols=AAPL.US,...] [--budget=N] [--demo] [--go]   (sin --go es dry-run; --demo usa la clave pública demo)\n  npm run replay [-- --run=ID] [--all]   (--all vuelve a pasar también lo ya marcado)');

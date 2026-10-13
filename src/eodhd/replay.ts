@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
 import { pool } from '../db/pool.js';
 import { writeListings, type ListingsInput, type ListingsSummary, type SymbolRecord } from '../normalizer/listings.js';
+import { writeDividends, writeSplits, type DividendRecord, type EventsSummary, type SplitRecord } from '../normalizer/events.js';
+import { isFxSymbol, writeFx, type FxRecord, type FxSummary } from '../normalizer/fx.js';
 import { emptyPricesSummary, parseJsonExact, writePrices, type EodRecord, type PricesSummary } from '../normalizer/prices.js';
 
 export interface ReplaySummary {
@@ -11,6 +13,9 @@ export interface ReplaySummary {
   listings?: ListingsSummary;
   listingsSweeps?: number; // pasadas del escritor de listings hasta que dejó de cambiar nada
   prices?: PricesSummary;
+  dividends?: EventsSummary;
+  splits?: EventsSummary;
+  fx?: FxSummary;
 }
 
 // Contadores de EVENTOS (lo que una pasada cambia) frente a contadores de ESTADO (lo que una pasada ve).
@@ -25,8 +30,10 @@ interface Row { id: string; run_id: string; endpoint: string; provider_symbol: s
 // cargar ficheros. Primero comprueba cada payload y marca parse_status; los escritores de la fuente de verdad se enganchan
 // por endpoint, en este orden (cada uno depende del anterior):
 //   1. exchange-symbol-list/{code} -> listings (src/normalizer/listings.ts), repetido hasta que una pasada no cambie nada.
-//   2. eod/{symbol}               -> precios brutos (src/normalizer/prices.ts), cuando el listing ya existe.
-// Los demás endpoints (div, splits, fundamentals...) solo se comprueban hasta que tengan escritor.
+//   2. eod/{symbol}               -> precios brutos (src/normalizer/prices.ts), cuando el listing ya existe; si el símbolo es
+//                                    un cruce EURxxx.FOREX va a FX_RATES (src/normalizer/fx.ts), que no depende de ningún listing.
+//   3. div/{symbol}, splits/{symbol} -> DIVIDEND y STOCK_SPLIT (src/normalizer/events.ts), cuando el listing ya existe.
+// Los demás endpoints (fundamentals...) solo se comprueban hasta que tengan escritor.
 //   ok       : respuesta 2xx, hash que coincide, JSON válido (un BOM inicial se tolera al decodificar) y escritor sin error.
 //   error    : cuerpo purgado, hash que no coincide, HTTP no 2xx, JSON inválido o fallo del escritor (se revierte su transacción).
 //   pendiente: el escritor no puede trabajar todavía (precios de un símbolo sin listing): no se marca y se reintenta en el siguiente replay.
@@ -34,7 +41,7 @@ interface Row { id: string; run_id: string; endpoint: string; provider_symbol: s
 // símbolo), también si ya estaba marcado: los escritores son idempotentes, así que repetirlo no cambia recuentos ni deja
 // filas nuevas en dimension_audit.
 // Las filas sin respuesta (transport_error) tienen parse_status NULL y no hay nada que releer.
-export async function replay(options: { runId?: string; all?: boolean } = {}): Promise<ReplaySummary> {
+export async function replay(options: { runId?: string; all?: boolean; maxSweeps?: number } = {}): Promise<ReplaySummary> {
   const rows = await pool.query<Row>(
     `SELECT raw_payload_id AS id, ingestion_run_id AS run_id, endpoint, provider_symbol, params, http_status, content_hash FROM raw_payload
      WHERE ${options.all
@@ -46,9 +53,11 @@ export async function replay(options: { runId?: string; all?: boolean } = {}): P
      ORDER BY raw_payload_id`,
     [options.runId ?? null],
   );
+  const maxSweeps = options.maxSweeps ?? MAX_SWEEPS;
   const summary: ReplaySummary = { checked: 0, ok: 0, error: 0, deferred: 0 };
   const listingInputs: ListingsInput[] = [];
   const priceItems: { row: Row; records: EodRecord[] }[] = [];
+  const eventItems: { row: Row; kind: 'div' | 'splits'; records: unknown[] }[] = [];
 
   const mark = async (row: Row, problem: string | null) => {
     await pool.query('UPDATE raw_payload SET parse_status = $2, parse_error = $3 WHERE raw_payload_id = $1', [row.id, problem ? 'error' : 'ok', problem]);
@@ -84,7 +93,17 @@ export async function replay(options: { runId?: string; all?: boolean } = {}): P
     if (!problem && row.endpoint === 'eod/{symbol}') {
       if (!Array.isArray(parsed)) problem = 'escritor de precios: se esperaba una lista de precios';
       else if (!row.provider_symbol) problem = 'escritor de precios: la fila no tiene provider_symbol';
-      else { priceItems.push({ row, records: parsed as EodRecord[] }); continue; } // se marca después, con el listing ya estable
+      else if (isFxSymbol(row.provider_symbol)) {
+        try { summary.fx = addCounts2(summary.fx, await writeFx({ rawPayloadId: row.id, runId: row.run_id, symbol: row.provider_symbol, records: parsed as FxRecord[] })); }
+        catch (e) { problem = `escritor de FX: ${(e as Error).message}`; }
+      } else { priceItems.push({ row, records: parsed as EodRecord[] }); continue; } // se marca después, con el listing ya estable
+    }
+
+    if (!problem && (row.endpoint === 'div/{symbol}' || row.endpoint === 'splits/{symbol}')) {
+      const kind = row.endpoint === 'div/{symbol}' ? 'div' : 'splits';
+      if (!Array.isArray(parsed)) problem = `escritor de ${kind}: se esperaba una lista`;
+      else if (!row.provider_symbol) problem = `escritor de ${kind}: la fila no tiene provider_symbol`;
+      else { eventItems.push({ row, kind, records: parsed }); continue; }
     }
 
     await mark(row, problem);
@@ -97,7 +116,9 @@ export async function replay(options: { runId?: string; all?: boolean } = {}): P
   if (summary.listings && listingInputs.length > 1) {
     let sweeps = 1;
     let events = changed(summary.listings);
-    while (events && sweeps < MAX_SWEEPS) {
+    while (events) {
+      // Tope de pasadas: si llega, el estado no converge (un bucle de reasignaciones) y se para con un error explícito.
+      if (sweeps >= maxSweeps) throw new Error(`listings: el escritor sigue cambiando datos tras ${maxSweeps} pasadas; el estado no converge (revisar primarios/ISIN)`);
       let last: ListingsSummary | undefined;
       for (const input of listingInputs) last = addCounts(last, await writeListings(input));
       sweeps++;
@@ -123,7 +144,28 @@ export async function replay(options: { runId?: string; all?: boolean } = {}): P
     }
     await mark(row, problem);
   }
+
+  // Eventos corporativos: también después de las listas.
+  for (const { row, kind, records } of eventItems) {
+    let problem: string | null = null;
+    try {
+      const input = { rawPayloadId: row.id, runId: row.run_id, symbol: row.provider_symbol!, records };
+      const s = kind === 'div' ? await writeDividends(input as { rawPayloadId: string; runId: string; symbol: string; records: DividendRecord[] })
+        : await writeSplits(input as { rawPayloadId: string; runId: string; symbol: string; records: SplitRecord[] });
+      if (s === null) { summary.deferred++; continue; } // sin listing todavía: sigue pendiente
+      if (kind === 'div') summary.dividends = addCounts2(summary.dividends, s); else summary.splits = addCounts2(summary.splits, s);
+    } catch (e) {
+      problem = `escritor de ${kind}: ${(e as Error).message}`;
+    }
+    await mark(row, problem);
+  }
   return summary;
+}
+
+function addCounts2<T extends object>(a: T | undefined, b: T): T {
+  const out = { ...b } as Record<string, number>;
+  if (a) for (const k of Object.keys(b)) out[k] = (a as Record<string, number>)[k]! + (b as Record<string, number>)[k]!;
+  return out as T;
 }
 
 function addCounts(a: ListingsSummary | undefined, b: ListingsSummary): ListingsSummary {

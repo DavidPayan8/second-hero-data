@@ -440,6 +440,13 @@ describe('varias cotizaciones por security y listing primario (P12)', () => {
     expect(await estado()).toEqual(antes); // 0 filas nuevas
   });
 
+  test('si las pasadas no convergen dentro del tope, replay falla con un error explícito', async () => {
+    await list('LSE', [sym('0AAA', { Type: 'Common Stock', Currency: 'USD', Isin: 'US0000012001' })]);
+    await list('US', [sym('AAA', { Type: 'Common Stock', Exchange: 'NASDAQ', Currency: 'USD', Isin: 'US0000012001' })]);
+    await fundamentals('AAA.US', { Name: 'Acción AAA', CIK: '0000012000' });
+    await expect(replay({ all: true, maxSweeps: 2 })).rejects.toThrow(/no converge/);
+  });
+
   test('delisted que reaparece como activo: no se reactiva y emite LISTING_REAPPEARED; una lista de activos vieja no avisa', async () => {
     await list('US', [sym('RENACE', { Exchange: 'NYSE', Currency: 'USD', Isin: 'US0000011001' })]); // p1 activo
     await list('US', [sym('RENACE', { Exchange: 'NYSE', Currency: 'USD', Isin: 'US0000011001' })], { delisted: '1' }); // p2 deslistado, más nuevo
