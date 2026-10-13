@@ -90,6 +90,11 @@ CHECK: `(status = 'open') = (resolved_at IS NULL)` y `(status = 'open') = (resol
 
 **`ACCOUNTING_BALANCE` sigue apagada hasta calibrarla con el universo.** Con 3 empresas no se puede fijar ni la fórmula ni la severidad. En TSLA el hueco es de un solo signo y la participación no controladora solo explica 7 de 16 periodos. La hipótesis a comprobar es el **patrimonio temporal** (*redeemable noncontrolling interests*, entre el pasivo y el patrimonio, que TSLA tuvo esos años). Con el plan de pago se mide sobre unas cientos de empresas qué campos del proveedor cierran el balance, y entonces se decide la fórmula y si es `error` o `warning`.
 
+**Cruce con la SEC (2026-10-14, con datos reales de AAPL, TSLA y AMZN):**
+- **Fecha de cierre con margen de 7 días.** EODHD da el fin de mes y la SEC el cierre real (AAPL cierra el último sábado de septiembre: 2025-09-27 frente a 2025-09-30). Provisional, en la config de D5.
+- **Contra qué presentación de la SEC se compara:** la que corresponde a **nuestra fila**, es decir, la de `filed` más cercana a su `reported_at` (la presentación original), **no** la más reciente. Una fila bitemporal es una presentación concreta; la SEC guarda también las cifras reexpresadas en informes posteriores (AAPL 2008-2009), y compararlas con la original da falsos positivos. Que la SEC conozca una reexpresión que el proveedor no trae no es un fallo de esta fila.
+- **Beneficio neto: solo cuenta el atribuible a la matriz** (`NetIncomeLoss`). `net_income` alimenta el BPA, que es por acción de la matriz. Si la fila del proveedor coincide con el consolidado (`ProfitLoss`) y no con el atribuible, **no** se marca `cross_checked`: se emite `SECOND_SOURCE_MISMATCH` con `detail.kind = 'consolidated'`. Que el proveedor mezcle las dos definiciones en una misma serie (visto en TSLA) es justo lo que la segunda fuente tiene que sacar a la luz, no esconder. Donde el atribuible y el consolidado coinciden (sin minoritarios), no hay diferencia.
+
 ---
 
 ## Flujo
