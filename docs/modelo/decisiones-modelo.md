@@ -190,6 +190,15 @@ Decidido al implementar la migración `003_hechos` (2026-10-10, propuesta P5). L
 
 ---
 
+### 5.6 Regla general: correcciones del proveedor y lagunas sistemáticas (2026-10-13)
+
+Resume lo decidido caso a caso (P13, P16, §5.5) para que cada escritor nuevo no reabra la pregunta:
+
+- **Misma clave natural, valor distinto → gana la última lectura del proveedor** (UPDATE). Nunca se conserva la primera solo por haber llegado antes.
+- **Rastro:** con finding (`PRICE_REVISED`, `FUNDAMENTALS_REVISED`, `CORPORATE_EVENT_CHANGED`) en las tablas que alimentan el núcleo financiero (precios, FX, fundamentales, acciones, eventos). En las series observadas por día (`as_of_date`: holders, analistas, ownership agregada, short interest, ETF) la corrección dentro del mismo día se aplica **en silencio**: su historia es la sucesión de días, no las versiones de un día. El valor anterior queda en `RAW_PAYLOAD`.
+- **NULL que pasa a valor:** se completa en silencio. **Valor que llega vacío:** no borra lo guardado.
+- **Laguna sistemática del proveedor** (le falta un campo de forma generalizada y nadie puede arreglarlo revisando: divisa del estimado futuro, ids de holder, cantidad de muchos insiders): **se cuenta en el resumen de la corrida y se documenta en `verificacion-eodhd.md`, sin finding.** Un finding es para lo que una persona puede revisar y resolver; mil findings idénticos por corrida esconden los que importan.
+
 ## 6. Divisas: fx_rates
 
 - **Base = EUR.** Unidad interna de referencia. La fuente de verdad guarda cada cosa en su **divisa nativa**; la conversión a EUR ocurre solo en la materialización del snapshot. Cambiar la base = cambiar una constante y re-materializar.

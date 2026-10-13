@@ -84,6 +84,7 @@ Snapshot-temporal. `as_of_date` = `General.UpdatedAt` de la ingesta. PK natural 
 Snapshot-temporal. PK natural `(security_id, as_of_date)`. Append-only, histórico conservado.
 
 - **`target_currency` explícito** (no asumir `quote_currency`). El precio objetivo puede venir en divisa distinta a la de cotización → reconciliar en lectura, misma regla que `FUNDAMENTALS.currency`/`DIVIDEND.currency`.
+- **Verificado (P17, 2026-10-13):** `AnalystRatings.TargetPrice` no trae divisa. Se aplica la regla de `decisiones-modelo-etf.md` §2.b (P15): `target_currency` = `General.CurrencyCode` **solo si el listing primario cotiza en EEUU**; fuera, `target_mean` y `target_currency` NULL hasta verificar con un valor europeo. La lista de países es la misma constante, un único sitio, compartida por ambos casos.
 - **`rating_mean` — dirección de escala:** **la fuente de verdad no fija la dirección**; guarda el valor tal cual lo da el proveedor. La primera versión asumía 1 = Strong Buy; la documentación de EODHD dice lo contrario (5 = Strong Buy, 1 = Strong Sell) y su ejemplo cuadra (`Rating: 4.1064` con 24 Strong Buy y 1 Strong Sell). Interpretar la escala es cosa de VISTAS, y antes de usarla se confirma con un payload real. Si la lectura se equivoca de dirección, invierte todo el consenso.
 - **Recuentos por recomendación** (P6): el proveedor da cuántos analistas están en cada categoría. Son primitivos (no se reconstruyen desde la media), así que se guardan: `strong_buy`, `buy`, `hold`, `sell`, `strong_sell` (enteros, nullable). Además permiten **comprobar la dirección con los propios datos**: la media ponderada de los recuentos solo coincide con `rating_mean` en una de las dos orientaciones (regla de validación candidata).
 - **`num_analysts`** solo se rellena si el proveedor da el número explícito; si no, es la suma de los recuentos y se deriva en VISTAS (no se guarda lo derivable). **`target_low` / `target_high`**: NULL cuando el proveedor solo da la media (`TargetPrice`).
@@ -141,3 +142,10 @@ Al implementar la migración de ownership se contrastó el modelo con la documen
 Todas las decisiones dejan el esquema válido tanto si la documentación acierta como si no: lo dudoso es nullable y lo que no se sabe no se interpreta.
 - `holder_type` (institution|fund): se queda como `CHECK` inline (dos valores, no justifica tabla). Subir a tabla de referencia solo si crece.
 - Capa de validación general (pendiente desde v1 del núcleo): outliers en transacciones de insiders, saltos de `shares_float` sospechosos, filas de ownership idénticas consecutivas.
+
+## 8. Insiders con datos reales (P18, 2026-10-13)
+
+Verificado con `InsiderTransactions` de TSLA y AMZN (clave demo, 40 transacciones):
+- **Columna nueva `acquired_disposed`** (texto, nullable, **sin CHECK**: es vocabulario del Form 4 de la SEC que da el proveedor, `A`/`D`). El sentido no se deduce de `transaction_code`: códigos como `M`, `F` o `G` pueden ir en cualquiera de los dos. `shares_transacted` sigue sin signo, tal cual.
+- **24 de 40 transacciones traen `transactionAmount` null** (y `secLink` null). `shares_transacted` sigue NOT NULL: una operación sin número de acciones no sirve para medir compras o ventas netas, y con NULL la clave de deduplicación de respaldo dejaría de deduplicar. No se crean. Es una **laguna sistemática** (`decisiones-modelo.md` §5.6): se cuentan en el resumen de la corrida y se documentan, **sin finding**.
+

@@ -90,6 +90,7 @@ erDiagram
     numeric cash
     numeric total_equity
     numeric total_assets
+    numeric total_liabilities "totalLiab, nullable"
   }
 
   SHARES_OUTSTANDING {

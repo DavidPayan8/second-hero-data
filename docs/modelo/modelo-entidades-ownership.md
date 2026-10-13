@@ -30,6 +30,7 @@ erDiagram
     text relationship "PROVISIONAL, sin verificar"
     date transaction_date "hecho puntual, fecha propia"
     text transaction_code "codigo nativo del filing (P/S/A...)"
+    text acquired_disposed "A/D del Form 4, tal cual, nullable, sin CHECK (P18)"
     numeric shares_transacted
     numeric price_per_share "nullable"
     numeric shares_owned_after "nullable"
