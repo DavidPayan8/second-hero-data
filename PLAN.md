@@ -124,6 +124,7 @@ Especificación: `docs/modelo/modelo-general.md` y cada par de chunk. Migracione
 | `014_fx_units_per_base` | (cambio sobre FX_RATES: `rate_to_base` -> `units_per_base`, la cotización `EURxxx` tal cual; convertir a EUR = dividir) | divisas |
 | `015_fundamentals_deuda_pasivo` | (cambio sobre FUNDAMENTALS: `short_term_debt`, `long_term_debt` y `total_liabilities`, todas nullable) | fundamentals |
 | `016_holder_unmapped_off` | (dato: `HOLDER_UNMAPPED` pasa a `enabled = false`) | validación |
+| `017_insider_acquired_disposed` | (cambio sobre INSIDER_TRANSACTION: `acquired_disposed`, texto nullable sin CHECK) | ownership |
 
 Total: **36 tablas**.
 
@@ -194,6 +195,8 @@ Especificación: `decisiones-modelo-ingesta.md`, `-referencia`, `-identidad`, `-
 ---
 
 ## Fase 4 — Validación
+
+**Estado (2026-10-13):** implementado en `src/validation/` (`runner.ts`, `emit.ts`, `rules.ts`, `secSecondSource.ts`, tolerancias en `config.ts`, D5) y `src/sec/`. Comandos: `npm run validate` (reglas activas del catálogo) y `npm run sec-capture` (companyfacts de la SEC, exige `SEC_USER_AGENT` real en `.env`). Falta la prueba con un payload real de la SEC (ver `docs/registro.md`). `ACCOUNTING_BALANCE` sigue apagada.
 
 Especificación: `decisiones-modelo-validacion.md`. El runner lee las reglas `enabled` de `VALIDATION_RULE` y ejecuta la lógica en código indexada por `rule_code`. No duplica findings abiertos para la misma regla y objetivo.
 
