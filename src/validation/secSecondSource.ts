@@ -1,5 +1,5 @@
 import { SEC_ENDPOINT, SEC_PROVIDER, cik10 } from '../sec/client.js';
-import { SEC_METRICS, findFact, withinTolerance, type SecMetric } from '../sec/facts.js';
+import { SEC_METRICS, findFacts, withinTolerance, type SecMetric } from '../sec/facts.js';
 import { VALIDATION_CONFIG as CFG } from './config.js';
 import { RUNNER_ACTOR, emitCandidates, type EmitCounts } from './emit.js';
 import type { RuleContext } from './runner.js';
@@ -50,11 +50,15 @@ export async function secSecondSource(ctx: RuleContext): Promise<SecCounts> {
     for (const metric of SEC_METRICS) {
       const mine = row[metric as SecMetric];
       if (mine === null) continue;
-      const fact = findFact(body, metric, row.period_end, row.period_type);
+      const facts = findFacts(body, metric, row.period_end, row.period_type, CFG.secPeriodWindowDays);
+      const fact = facts[0];
       if (!fact) continue;
       comparedMetrics++;
-      if (!withinTolerance(mine, fact.value, CFG.secTolerance)) {
-        mismatches.push({ metric, provider: mine, sec: fact.value, sec_tag: fact.tag, sec_form: fact.form, sec_filed: fact.filed, sec_accn: fact.accn });
+      // Coincidir con cualquiera de las etiquetas de la magnitud basta (p. ej. beneficio atribuible o consolidado). Si ninguna, el
+      // finding lleva la preferida y, si las hay, las demás.
+      if (!facts.some((x) => withinTolerance(mine, x.value, CFG.secTolerance))) {
+        mismatches.push({ metric, provider: mine, sec: fact.value, sec_tag: fact.tag, sec_end: fact.end, sec_form: fact.form, sec_filed: fact.filed, sec_accn: fact.accn,
+          ...(facts.length > 1 ? { sec_other_tags: facts.slice(1).map((x) => ({ tag: x.tag, value: x.value })) } : {}) });
       }
     }
     if (!comparedMetrics) { out.noFacts++; continue; }

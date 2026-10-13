@@ -1,14 +1,18 @@
-// Lectura de companyfacts de la SEC. FORMA SIN VERIFICAR CON UN PAYLOAD REAL: viene de la documentación pública de la API XBRL
-// (https://www.sec.gov/search-filings/edgar-application-programming-interfaces); no hay una captura de data.sec.gov en este
-// repo (falta un SEC_USER_AGENT real). Forma esperada:
+// Lectura de companyfacts de la SEC. Forma verificada el 2026-10-14 con capturas reales de AAPL, AMZN y TSLA (coincide con la de
+// la documentación pública: https://www.sec.gov/search-filings/edgar-application-programming-interfaces; claves de primer nivel
+// cik, entityName y facts; taxonomías dei y us-gaap, y a veces ecd y ffd). Forma:
 //   { cik, entityName, facts: { "us-gaap": { "<Tag>": { units: { "USD": [ { start?, end, val, accn, fy, fp, form, filed, frame? } ] } } } } }
 // `start` solo en magnitudes de periodo (ingresos, beneficio); las de fecha (activo) llevan solo `end`. Todo lo que no encaje con
 // esa forma se trata como ausente, nunca se adivina.
 
 // ----------------------------------------------------------------------------------------------------------------------
-// PROVISIONAL: etiquetas us-gaap de cada magnitud, en orden de preferencia (se usa la primera que tenga un dato del periodo).
-// ÚNICO sitio con esta lista. A confirmar con payloads reales: p. ej. los ingresos de una empresa cambian de etiqueta con el tiempo
-// (SalesRevenueNet -> RevenueFromContractWithCustomerExcludingAssessedTax tras ASC 606).
+// Etiquetas us-gaap de cada magnitud, en orden de preferencia. ÚNICO sitio con esta lista. Contrastadas el 2026-10-14 con los
+// companyfacts reales de AAPL, AMZN y TSLA:
+//  - ingresos: AAPL usa SalesRevenueNet hasta 2018 y RevenueFromContractWithCustomerExcludingAssessedTax después (Revenues solo 2016-2018);
+//    AMZN, igual (SalesRevenueNet hasta 2018); TSLA usa Revenues (todo el histórico) y la de ASC 606 desde 2018.
+//  - beneficio: NetIncomeLoss (atribuible a la matriz) en las tres; TSLA además ProfitLoss (consolidado, con participación no
+//    controladora). El proveedor da a veces uno y a veces el otro: la fila cuadra si coincide con cualquiera de las etiquetas.
+//  - activo: Assets en las tres.
 // ----------------------------------------------------------------------------------------------------------------------
 export const SEC_TAGS = {
   revenue: ['Revenues', 'RevenueFromContractWithCustomerExcludingAssessedTax', 'RevenueFromContractWithCustomerIncludingAssessedTax', 'SalesRevenueNet'],
@@ -30,30 +34,42 @@ export interface SecFact { metric: SecMetric; tag: string; value: string; end: s
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const days = (a: string, b: string) => Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / 864e5);
 
-// El dato de una magnitud para un cierre y un tipo de periodo: entradas en USD con ese `end`, el formulario del tipo y, en las de
-// periodo, la duración esperada; si hay varias (la misma cifra repetida en formularios posteriores o reexpresada), la presentada
-// más tarde. Devuelve null si no hay.
-export function findFact(body: unknown, metric: SecMetric, periodEnd: string, periodType: 'A' | 'Q'): SecFact | null {
+// Los datos de una magnitud para un cierre y un tipo de periodo, uno por etiqueta (en orden de preferencia): entradas en USD con
+// ese `end` (o a menos de windowDays de él: EODHD da el fin de mes y la SEC el cierre real de los ejercicios de 52/53 semanas), el
+// formulario del tipo y, en las de periodo, la duración esperada. Si una etiqueta tiene varias (la misma cifra repetida en
+// formularios posteriores o reexpresada), el cierre más cercano y, a igualdad, la presentada más tarde.
+export function findFacts(body: unknown, metric: SecMetric, periodEnd: string, periodType: 'A' | 'Q', windowDays = 0): SecFact[] {
   const gaap = isObj(body) && isObj(body.facts) && isObj(body.facts['us-gaap']) ? body.facts['us-gaap'] : null;
-  if (!gaap) return null;
+  if (!gaap) return [];
+  const out: SecFact[] = [];
   for (const tag of SEC_TAGS[metric]) {
     const node = gaap[tag];
     const usd = isObj(node) && isObj(node.units) && Array.isArray(node.units.USD) ? node.units.USD : [];
     let best: SecFact | null = null;
+    let bestGap = Infinity;
     for (const e of usd) {
-      if (!isObj(e) || e.end !== periodEnd || e.form !== FORM[periodType] || (typeof e.val !== 'number' && typeof e.val !== 'string')) continue;
+      if (!isObj(e) || typeof e.end !== 'string' || e.form !== FORM[periodType] || (typeof e.val !== 'number' && typeof e.val !== 'string')) continue;
+      const gap = Math.abs(days(e.end, periodEnd));
+      if (!(gap <= windowDays)) continue;
       if (DURATION[metric]) {
         if (typeof e.start !== 'string') continue;
-        const d = days(e.start, periodEnd);
+        const d = days(e.start, e.end);
         if (d < DURATION_DAYS[periodType][0] || d > DURATION_DAYS[periodType][1]) continue;
       }
       const filed = typeof e.filed === 'string' ? e.filed : '';
-      if (!best || filed > best.filed) best = { metric, tag, value: String(e.val), end: periodEnd, form: String(e.form), filed, accn: typeof e.accn === 'string' ? e.accn : null };
+      if (!best || gap < bestGap || (gap === bestGap && filed > best.filed)) {
+        best = { metric, tag, value: String(e.val), end: e.end, form: String(e.form), filed, accn: typeof e.accn === 'string' ? e.accn : null };
+        bestGap = gap;
+      }
     }
-    if (best) return best;
+    if (best) out.push(best);
   }
-  return null;
+  return out;
 }
+
+// Para ingresos de un tag preferido y respaldo: el primero con dato. Atajo de findFacts.
+export const findFact = (body: unknown, metric: SecMetric, periodEnd: string, periodType: 'A' | 'Q', windowDays = 0): SecFact | null =>
+  findFacts(body, metric, periodEnd, periodType, windowDays)[0] ?? null;
 
 // |proveedor - SEC| <= tolerancia * |SEC|. Con SEC = 0 solo vale el 0 exacto.
 export function withinTolerance(provider: string, sec: string, tolerance: number): boolean {

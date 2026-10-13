@@ -179,7 +179,7 @@ describe('SECOND_SOURCE_MISMATCH', () => {
     expect((await row(a)).src).toBe('provider');
     expect(await findings()).toEqual([{ target_key: { fundamentals_id: Number(a) }, severity: 'warning', status: 'open', detail: {
       period_end: '2025-09-27', period_type: 'A', tolerance: 0.005,
-      mismatches: [{ metric: 'revenue', provider: '480', sec: '400', sec_tag: 'Revenues', sec_form: '10-K', sec_filed: '2025-10-30', sec_accn: '0000000102-25-000009' }] } }]);
+      mismatches: [{ metric: 'revenue', provider: '480', sec: '400', sec_tag: 'Revenues', sec_end: '2025-09-27', sec_form: '10-K', sec_filed: '2025-10-30', sec_accn: '0000000102-25-000009' }] } }]);
     expect((await run()).ran.SECOND_SOURCE_MISMATCH).toMatchObject({ mismatched: 1, inserted: 0, updated: 0, unchanged: 1 });
     expect(await findings()).toHaveLength(1);
     // aceptado: no se re-emite mientras el detail sea el mismo
@@ -198,6 +198,33 @@ describe('SECOND_SOURCE_MISMATCH', () => {
     expect((await findings())[0]).toMatchObject({ status: 'open' });
     expect((await runValidation({ today: '2026-10-13' })).ran.SECOND_SOURCE_MISMATCH).toMatchObject({ closed: 1 });
     expect((await pool.query("SELECT status, resolved_by FROM data_quality_finding WHERE rule_code = 'SECOND_SOURCE_MISMATCH'")).rows).toEqual([{ status: 'dismissed', resolved_by: 'runner' }]);
+  });
+
+  test('el cierre de EODHD (fin de mes) y el de la SEC (52/53 semanas) pueden diferir unos días; más de la ventana no se compara', async () => {
+    const co = await makeCompany('0000000105');
+    const near = await fund(co, '2025-09-30', 'A', { revenue: '400', net_income: '100', total_assets: '1000' }); // la SEC cierra el 09-27
+    const far = await fund(co, '2024-09-30', 'A', { revenue: '300' }); // la SEC cierra el 09-21: 9 días, fuera de la ventana
+    await storeFacts('0000000105', body({
+      Revenues: [annual('2025-09-27', 400), annual('2024-09-21', 300, { start: '2023-09-24' })], NetIncomeLoss: [annual('2025-09-27', 100)], Assets: [instant('2025-09-27', 1000)],
+    }));
+    expect((await run()).ran.SECOND_SOURCE_MISMATCH).toMatchObject({ compared: 1, crossChecked: 1, noFacts: 1 });
+    expect((await row(near)).src).toBe('cross_checked');
+    expect((await row(far)).src).toBe('provider');
+  });
+
+  test('el beneficio coincide con cualquiera de sus etiquetas (atribuible NetIncomeLoss o consolidado ProfitLoss); con ninguna, finding con la preferida y las otras', async () => {
+    const co = await makeCompany('0000000106');
+    const consolidated = await fund(co, '2025-09-27', 'A', { net_income: '105' });
+    const neither = await fund(co, '2024-09-27', 'A', { net_income: '200' });
+    await storeFacts('0000000106', body({
+      NetIncomeLoss: [annual('2025-09-27', 100), annual('2024-09-27', 100, { start: '2023-10-01' })],
+      ProfitLoss: [annual('2025-09-27', 105), annual('2024-09-27', 110, { start: '2023-10-01' })],
+    }));
+    await run();
+    expect((await row(consolidated)).src).toBe('cross_checked');
+    expect((await row(neither)).src).toBe('provider');
+    expect(await findings()).toHaveLength(1);
+    expect((await findings())[0]!.detail.mismatches[0]).toMatchObject({ metric: 'net_income', sec_tag: 'NetIncomeLoss', sec: '100', sec_other_tags: [{ tag: 'ProfitLoss', value: '110' }] });
   });
 
   test('una cifra fuera de tolerancia basta para no marcar la fila, aunque las demás cuadren; una magnitud sin dato en la SEC se ignora', async () => {

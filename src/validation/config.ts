@@ -5,6 +5,8 @@ export const VALIDATION_CONFIG = {
   accountingBalanceTolerance: 0.01,
   // SECOND_SOURCE_MISMATCH: |valor del proveedor - valor SEC| / |valor SEC|.
   secTolerance: 0.005,
+  // SECOND_SOURCE_MISMATCH: días de diferencia admitidos entre el cierre de EODHD (fin de mes) y el de la SEC (ejercicios de 52/53 semanas, p. ej. AAPL 2025-09-27 frente a 2025-09-30).
+  secPeriodWindowDays: 7,
   // YOY_JUMP: variación relativa frente al mismo periodo del año anterior (2 = 200 %), en valor absoluto.
   yoyJumpRatio: 2,
   // Desfase admitido, en días, al buscar el periodo del año anterior (los cierres fiscales de 52/53 semanas se mueven unos días).
