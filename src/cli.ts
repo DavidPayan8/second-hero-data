@@ -20,14 +20,16 @@ try {
       for (const j of jobs) console.log(`  [dry-run] ${j.endpoint} ${j.symbol ?? ''} ${JSON.stringify(j.params)} (coste ${j.cost})`);
       console.log('Sin --go no se llama a la API.');
     } else {
-      const s = await capture(scope, jobs, { budget, log: (m) => console.log(m) });
+      // --demo usa la clave pública "demo" de EODHD (otra cuota, solo algunos símbolos) en lugar de la clave propia.
+      const s = await capture(scope, jobs, { budget, log: (m) => console.log(m), ...(args.includes('--demo') ? { apiKey: 'demo' } : {}) });
       console.log(`Corrida ${s.runId}: ${s.status}. Intentos ${s.attempts}, ok ${s.ok}, errores ${s.errors}, coste ${s.spent}/${s.budget}, trabajos ${s.jobsDone}/${jobs.length}${s.stoppedBy ? `, parada por ${s.stoppedBy}` : ''}.`);
     }
   } else if (cmd === 'replay') {
-    const s = await replay({ runId: flag('run') });
+    const s = await replay({ runId: flag('run'), all: args.includes('--all') });
     console.log(`Replay: ${s.checked} filas revisadas, ${s.ok} ok, ${s.error} con error.`);
+    if (s.listings) console.log('Listings:', JSON.stringify(s.listings));
   } else {
-    console.log('Uso:\n  npm run capture -- --scope=symbols:LSE [--symbols=AAPL.US,...] [--budget=N] [--go]   (sin --go es dry-run)\n  npm run replay [-- --run=ID]');
+    console.log('Uso:\n  npm run capture -- --scope=symbols:LSE [--symbols=AAPL.US,...] [--budget=N] [--demo] [--go]   (sin --go es dry-run; --demo usa la clave pública demo)\n  npm run replay [-- --run=ID] [--all]   (--all vuelve a pasar también lo ya marcado)');
   }
 } finally {
   await closePool();

@@ -4,8 +4,9 @@ import { config } from '../config.js';
 import { pool } from '../db/pool.js';
 import { clientOptions, fetchRaw, type ClientOptions, type FetchResult } from './client.js';
 import { resolvePath, type Job } from './jobs.js';
+import { PROVIDER } from './provider.js';
 
-export const PROVIDER = 'eodhd';
+export { PROVIDER };
 
 export interface CaptureOptions extends Partial<ClientOptions> {
   budget?: number; // tope de coste por corrida (llamadas de cuota); se para ANTES de superarlo

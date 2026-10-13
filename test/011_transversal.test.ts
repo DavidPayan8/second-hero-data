@@ -58,10 +58,10 @@ test('validation_rule: PK rule_code, category y default_severity en dominio, ena
   expect((await c.query("SELECT enabled FROM validation_rule WHERE rule_code='R_TEST'")).rows[0].enabled).toBe(true);
 }));
 
-test('seed validation_rule: catálogo de 13 reglas; ACCOUNTING_BALANCE desactivada (D4); VENUE_UNMAPPED y ASSET_TYPE_UNMAPPED structural warning (D6)', async () => {
+test('seed validation_rule: catálogo de 14 reglas; ACCOUNTING_BALANCE desactivada (D4); VENUE_UNMAPPED y ASSET_TYPE_UNMAPPED structural warning (D6)', async () => {
   const { rows } = await pool.query<{ rule_code: string; category: string; default_severity: string; enabled: boolean }>('SELECT rule_code, category, default_severity, enabled FROM validation_rule ORDER BY 1');
   const by = Object.fromEntries(rows.map((r) => [r.rule_code, r]));
-  expect(rows).toHaveLength(13);
+  expect(rows).toHaveLength(14);
   expect(by.ACCOUNTING_BALANCE?.enabled).toBe(false);
   expect(rows.filter((r) => !r.enabled).map((r) => r.rule_code)).toEqual(['ACCOUNTING_BALANCE']);
   for (const code of ['VENUE_UNMAPPED', 'ASSET_TYPE_UNMAPPED']) expect(by[code], code).toMatchObject({ category: 'structural', default_severity: 'warning' });

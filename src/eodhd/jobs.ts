@@ -1,5 +1,7 @@
-// Trabajos de captura: qué llamada hacer y cuánto cuesta en cuota. El coste de cada endpoint sale de
-// references/general/rate-limits.md del plugin eodhd-api y de lo observado en el plan Free (news con un ticker = 5).
+// Trabajos de captura: qué llamada hacer y cuánto cuesta en cuota.
+// PROVISIONAL: la tabla COST de abajo es el ÚNICO sitio con el coste en cuota de cada endpoint. Sale de
+// references/general/rate-limits.md del plugin eodhd-api y de lo observado en el plan Free (news con un ticker = 5;
+// fundamentals = 10). Cada intento gasta su coste aunque falle, que es lo conservador. Hay que contrastarla con el panel.
 export interface Job {
   // Plantilla de ruta con marcadores {symbol} y {code}: es lo que se guarda en raw_payload.endpoint.
   endpoint: string;

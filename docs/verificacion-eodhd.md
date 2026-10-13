@@ -13,23 +13,80 @@ Evidencia de payloads reales capturados en `fixtures/eodhd/` (que no se suben al
 
 | Id | Pregunta | Veredicto | Impacto en el modelo |
 |---|---|---|---|
-| ★ C1 | CIK y LEI a nivel de empresa | **No verificable** con el plan Free | Bloqueante. La doc del plugin dice `General.CIK`, `General.LEI`, `General.ISIN`, `General.PrimaryTicker`, pero no hay payload real. |
-| C2 | ISIN por símbolo | Parcial | `exchange-symbol-list/US` trae `Isin`, nulo en el 30 % de los activos. |
-| C3 | Fecha de presentación en fundamentales | No verificable | Depende de `fundamentals`. |
-| C4 | Divisa de estados vs. cotización | Parcial | `SHEL.LSE` cotiza en GBX (peniques) pero sus dividendos vienen en `GBP`. Divisa de los estados sin ver. |
+| ★ C1 | CIK y LEI a nivel de empresa | **Sí en acciones** (3 de 3 con la clave demo); no en ETF | `General.CIK` (cadena de 10 dígitos con ceros: `"0000320193"`) y `General.LEI` en `AAPL.US`, `TSLA.US` y `AMZN.US`. Falta GOOGL/GOOG (doble clase) y Europa/Canadá. Ver «Captura con la clave demo». |
+| C2 | ISIN por símbolo | Parcial | En acciones, `General.ISIN`; en ETF, `ETF_Data.ISIN` (no está en `General`). Más `exchange-symbol-list/US`, nulo en el 30 % de los activos. |
+| C3 | Fecha de presentación en fundamentales | **Sí** | `Financials.Balance_Sheet.quarterly[fecha].filing_date` (AAPL 2026-06-30 → presentado 2026-07-31) ⇒ `reported_at_source = provider`. Comprobado solo en el balance de AAPL. |
+| C4 | Divisa de estados vs. cotización | **Sí** (acciones EEUU y LSE) | `Financials.*.currency_symbol` = `USD` en AAPL; `exchange-symbol-list/LSE` da `Currency` `GBX` para `SHEL`. Divisa de los estados de Shell sin ver. |
 | C5 | Sub-bolsa de los símbolos `US` | **Sí** | Campo `Exchange` de `exchange-symbol-list/US`, 17 etiquetas. Entrada para `SOURCE_VENUE_MAP`. |
 | C6 | Cobertura de deslistadas | Parcial | Existen y se listan. Profundidad de precios sin medir por el límite de 1 año. |
 | C7 | Formato de splits y dividendos | **Sí** | Confirmado. Ver detalle. |
-| C8 | Id estable de InsiderTransactions | No verificable | Fuera del plan. |
-| C9 | Id estable de holder (`holder_ref`) | No verificable | Fuera del plan. |
-| C10 | Escala de rating de analistas | No verificable | Fuera del plan. |
-| C11 | Bloque ETF | No verificable | Fuera del plan. |
-| C12 | Earnings | No verificable | Fuera del plan. |
+| C8 | Id estable de InsiderTransactions | Sin dato en AAPL | `InsiderTransactions` viene vacío (`{}`) en `AAPL.US` dentro de `fundamentals`. Sigue sin verse un id por transacción. |
+| C9 | Id estable de holder (`holder_ref`) | **No** | `Holders.Institutions` y `Funds` (20 entradas cada una en AAPL): `name`, `date`, `totalShares`, `totalAssets`, `currentShares`, `change`, `change_p`; ningún id. |
+| C10 | Escala de rating de analistas | **Sí: 5 = Strong Buy** | `AnalystRatings.Rating` de AAPL = 3,7955 y la media ponderada de sus recuentos (19 StrongBuy, 6 Buy, 13 Hold, 3 Sell, 3 StrongSell) con 5 = Strong Buy da 3,7955; con 1 = Strong Buy daría 2,2045. **El modelo asumía lo contrario.** |
+| C11 | Bloque ETF | **Sí (VTI)** | `ETF_Data` con perfil, `Holdings` por símbolo (3.468), `Sector_Weights`, `Asset_Allocation`, `World_Regions`, `Market_Capitalisation`. Sin NAV diario ni ISIN del constituyente. |
+| C12 | Earnings | Parcial | `Earnings.History[fecha]` con `reportDate`, `beforeAfterMarket`, `epsEstimate`, `epsActual`, `currency` (nulo en el futuro). |
 | C13 | News | **Sí** | Etiquetada por lista de símbolos. |
 | C14 | `symbol-change-history` | No verificable | Según doc: solo bolsas US, desde 2022-07-22, plan All World Extended o All-In-One. |
-| C15 | Etiquetas de sector / industria | No verificable | Depende de `fundamentals`. |
+| C15 | Etiquetas de sector / industria | Parcial (3 acciones y 1 ETF) | `General.Sector`/`Industry` (estilo Morningstar) y `Gic*` (GICS); el ETF usa otra grafía en `Sector_Weights`. |
 | C16 | Valores de `Type` | Parcial | Valores de `exchange-symbol-list`; los de `fundamentals` (`General.Type`) sin ver. |
-| C17 | Acciones en circulación | No verificable | Depende de `fundamentals`. |
+| C17 | Acciones en circulación | **Sí** | `outstandingShares.quarterly[n]` (`date`, `dateFormatted`, `sharesMln`, `shares`) y `annual`; además `SharesStats.SharesOutstanding`. |
+
+## Captura con la clave demo (2026-10-12): fundamentals de AAPL, TSLA, AMZN y VTI
+
+Cuatro llamadas con la clave pública `demo` de EODHD (no gastan cuota de la clave propia), capturadas con `capture` como cualquier otro payload (`ingestion_run` 176): `fundamentals/AAPL.US` 971.193 bytes, `TSLA.US` 498.091, `AMZN.US` 767.540 y `VTI.US` 687.944, todas HTTP 200. Son payloads reales, no documentación. Secciones de una acción: `General`, `Highlights`, `Valuation`, `SharesStats`, `Technicals`, `SplitsDividends`, `AnalystRatings`, `Holders`, `InsiderTransactions`, `ESGScores`, `outstandingShares`, `Earnings`, `Financials`. Secciones de un ETF: `General`, `Technicals`, `ETF_Data`.
+
+### C1 — CIK y LEI (forma de `General`)
+
+| Símbolo | `General.CIK` | `General.LEI` | `General.ISIN` | `FiscalYearEnd` |
+|---|---|---|---|---|
+| AAPL.US | `"0000320193"` | `"HWUPKR0MPOU8FGXBT394"` | `"US0378331005"` | `"September"` |
+| TSLA.US | `"0001318605"` | `"54930043XZGB27CTOV49"` | `"US88160R1014"` | `"December"` |
+| AMZN.US | `"0001018724"` | `"ZXTILKJKG63JELOEG630"` | `"US0231351067"` | `"December"` |
+| VTI.US (ETF) | — | — | — (está en `ETF_Data.ISIN`: `"US9229087690"`) | — |
+
+- Claves de `General` en una acción: `Code`, `Type`, `Name`, `Exchange`, `CurrencyCode`, `CurrencyName`, `CurrencySymbol`, `CountryName`, `CountryISO`, `OpenFigi`, `ISIN`, `LEI`, `PrimaryTicker`, `CUSIP`, `CIK`, `EmployerIdNumber`, `FiscalYearEnd`, `IPODate`, `InternationalDomestic`, `Sector`, `Industry`, `GicSector`, `GicGroup`, `GicIndustry`, `GicSubIndustry`, `HomeCategory`, `IsDelisted`, `Description`, `Address`, `AddressData`, `Listings`, `Officers`, `Phone`, `WebURL`, `LogoURL`, `FullTimeEmployees`, `UpdatedAt`. En un ETF solo: `Code`, `Type`, `Name`, `Exchange`, `CurrencyCode`, `CurrencyName`, `CurrencySymbol`, `CountryName`, `CountryISO`, `OpenFigi`, `Description`, `Category` (nulo), `UpdatedAt`.
+- **El CIK es una cadena de 10 dígitos con ceros a la izquierda**, no `"320193"` como en el ejemplo de la documentación del plugin. Se guarda tal cual en `COMPANY.cik`; es el mismo formato que pide la API de la SEC (`CIK##########`).
+- `FiscalYearEnd` es el nombre del mes en inglés, no un número; `CountryISO` es alfa-2. `IsDelisted` (booleano) existe en `General`.
+- **No verificado:** GOOGL/GOOG (¿mismo CIK?), una empresa europea (SAP.XETRA, ITX.MC) ni canadiense: la clave demo solo sirve ciertos símbolos.
+- Consecuencia para el normalizador: la ruta `General.CIK` / `General.LEI` es la del `resolver_company()`; un CIK de ceros o vacío se trata como ausente.
+
+### C3 y C4 — fecha de presentación y divisa de los estados
+
+`Financials.Balance_Sheet.quarterly["2026-06-30"]` de AAPL trae `date` `"2026-06-30"`, **`filing_date` `"2026-07-31"`** y `currency_symbol` `"USD"`; `Financials.Balance_Sheet` tiene además `currency_symbol` a nivel de sección. Es la fecha de publicación por periodo que pedía C3: `reported_at_source = 'provider'` es posible. Falta ver `Income_Statement` y `Cash_Flow`, y el campo en periodos anuales.
+
+### C10 — escala del rating (resuelve la duda de P6 a)
+
+`AnalystRatings` de AAPL: `{"Rating": 3.7955, "TargetPrice": 328.0938, "StrongBuy": 19, "Buy": 6, "Hold": 13, "Sell": 3, "StrongSell": 3}` (44 analistas). Media ponderada con 5 = Strong Buy: (5·19 + 4·6 + 3·13 + 2·3 + 1·3) / 44 = **3,7955**, idéntica a `Rating`; con 1 = Strong Buy sale 2,2045. **La dirección es 5 = Strong Buy, 1 = Strong Sell**, como decía la documentación del plugin y al revés de lo que asumía la primera versión del modelo. Solo hay `TargetPrice` (media): sin mínimo ni máximo. Comprobado en AAPL; la regla de validación candidata del modelo (comprobar la dirección con los recuentos) funciona.
+
+### C8, C9, C17 y short interest
+
+- `InsiderTransactions` viene vacío (`{}`) en `AAPL.US`.
+- `Holders`: subsecciones `Institutions` y `Funds`, indexadas `"0"`, `"1"`...; cada entrada `{name, date, totalShares, totalAssets, currentShares, change, change_p}` (ej. `BlackRock Inc`, `date` `2026-06-30`, `currentShares` 1.162.996.939). Sin id.
+- `outstandingShares.quarterly["0"]` = `{"date": "2026-Q2", "dateFormatted": "2026-06-30", "sharesMln": "14750.3020", "shares": 14750302000}`; también `annual`. `SharesStats.SharesOutstanding` (14.594.180.000) es otra fecha.
+- Short interest: `SharesStats.SharesShort` es `null`; `Technicals.SharesShort` 120.763.539 y `SharesShortPriorMonth` 128.753.092, sin fecha de liquidación.
+
+### C12 — earnings
+
+`Earnings` tiene `History`, `Trend` y `Annual`. Una entrada de `History` de AAPL: clave `"2026-09-30"`, `{"reportDate": "2026-11-02", "date": "2026-09-30", "beforeAfterMarket": "AfterMarket", "currency": null, "epsActual": null, "epsEstimate": 1.98, "epsDifference": 0, "surprisePercent": null}`. **`currency` es `null`** aunque haya `epsEstimate`: `EARNINGS.estimate_currency` no sale de ese campo (habría que tomarla de los estados, y el CHECK del esquema la exige si hay estimación). Pendiente de propuesta cuando se escriba el escritor de earnings.
+
+### C15 — sector e industria
+
+| Símbolo | `Sector` | `Industry` | `GicSector` |
+|---|---|---|---|
+| AAPL.US | `Technology` | `Consumer Electronics` | `Information Technology` |
+| TSLA.US | `Consumer Cyclical` | `Auto Manufacturers` | `Consumer Discretionary` |
+| AMZN.US | `Consumer Cyclical` | `Internet Retail` | `Consumer Discretionary` |
+
+Hay dos vocabularios en el mismo payload: `Sector`/`Industry` (estilo Morningstar) y `Gic*` (etiquetas tipo GICS). Para D3 hay que decidir con cuál se alimenta `SOURCE_SECTOR_MAP`; el modelo descartó copiar GICS oficial, aunque aquí el proveedor sirve las etiquetas como texto. **El ETF usa otra grafía**: `ETF_Data.Sector_Weights` trae `Basic Materials`, `Consumer Cyclicals` (plural), `Financial Services`, `Real Estate`, `Communication Services`, `Energy`, `Industrials`, `Technology`, `Consumer Defensive`, `Healthcare`, `Utilities`, frente a `Consumer Cyclical` de las acciones. `SOURCE_SECTOR_MAP` necesita las dos grafías.
+
+### C11 — bloque ETF (VTI.US)
+
+- `General` sin ISIN, LEI ni CIK; `Category` `null`. `ETF_Data.ISIN` `"US9229087690"`.
+- Perfil: `Company_Name` `"Vanguard"`, `Domicile` `"United States"`, `Index_Name` `null`, `Inception_Date` `"2001-05-24"`, `NetExpenseRatio` **0,0003** (número, en fracción), `Ongoing_Charge` `null`, `Max_Annual_Mgmt_Charge` `"0.00"` (cadena), `Yield` 1,0327 (porcentaje), `TotalAssets` `"704958596680.00"` (cadena), `Holdings_Count` 3468.
+- `Holdings`: 3.468 entradas indexadas por símbolo (`"NVDA.US"`), cada una `{Code, Exchange: "US", Name, Sector, Industry, Country, Region, "Assets_%": 6.0681}`. Sin ISIN, importe, acciones ni fecha.
+- `Sector_Weights`: 11 etiquetas con `{"Equity_%": número}`. `Asset_Allocation`: `Cash`, `NotClassified`, `Stock non-US`, `Other`, `Stock US`, `Bond`, cada una con `Long_%`, `Short_%` y `Net_Assets_%`, **a veces como número y a veces como cadena `"0"`**. `World_Regions`: 10 claves que mezclan regiones y países (`North America`, `United Kingdom`, `Europe Developed`...) y **suman más de 100** (`North America` 104,0175). `Market_Capitalisation`: `Mega` 41,0366, `Big`, `Medium`, `Small`, `Micro`.
+- No hay NAV diario ni acciones del ETF, como sospechaba P7.
+- Los valores numéricos mezclan número y cadena dentro del mismo bloque: el escritor de ETF tiene que convertir con cuidado.
 
 ## Detalle
 

@@ -90,7 +90,7 @@ test('la llamada lleva fmt=json y el token, pero el servidor es el único que lo
 });
 
 test('429 es respuesta con cuerpo y para la corrida sin gastar más cuota', async () => {
-  const s = await capture(scope('429'), [job('limit/1'), job('ok/1'), job('ok/2')], opts());
+  const s = await capture(scope('429'), [job('limit/1'), job('ok/1'), job('ok/2')], opts({ maxAttempts: 3 })); // con intentos de sobra: el 429 no se reintenta
   expect(s.stoppedBy).toBe('rate_limit');
   expect(s).toMatchObject({ status: 'failed', attempts: 1, errors: 1, jobsDone: 0, jobsSkipped: 3 }); // el 429 deja el trabajo sin completar
   expect(seen).toHaveLength(1); // los otros dos trabajos no se llamaron
