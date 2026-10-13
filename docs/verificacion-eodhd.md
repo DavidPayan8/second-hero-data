@@ -219,3 +219,35 @@ Solo de `exchange-symbol-list/US`: `Common Stock`, `ETF`, `FUND`, `Mutual Fund`,
 ### C17
 
 No verificable (depende de `fundamentals`; la doc del plugin menciona `SharesStats.SharesOutstanding`, sin capturar).
+
+## Captura con la clave demo (2026-10-13): bloques de ownership, analistas, earnings y noticias
+
+Los mismos payloads de `fundamentals` de AAPL, TSLA y AMZN (corrida 176) leídos para los escritores de earnings, analistas, holders, insiders y short interest, más `news` de `AAPL.US`, `TSLA.US`, `AMZN.US` y `VTI.US` con la clave demo (corridas 183 y 184, 10 artículos cada una, HTTP 200). Un ETF (`VTI.US`) solo trae `General`, `Technicals` y `ETF_Data`: no tiene `Earnings`, `AnalystRatings`, `Holders`, `InsiderTransactions` ni `SharesStats`. Todo está verificado solo con tres acciones de EEUU; nada se ha visto con una empresa europea o canadiense.
+
+### Pasivo total (`Balance_Sheet.totalLiab`) y deuda (migración 015)
+
+`totalLiab` existe y tiene la misma cobertura que `totalAssets`. Periodos con dato (entradas totales entre paréntesis; las entradas sin datos de los primeros años no cuentan): AAPL 152 trimestres (164) y 41 años; TSLA 75 trimestres y 19 años (20); AMZN 120 trimestres (123) y 30 años. `shortTermDebt` y `longTermDebt` (columnas nuevas `short_term_debt` y `long_term_debt`) tienen menos: AAPL 135 y 81 trimestres, 36 y 16 años; TSLA 70 y 68 trimestres, 19 y 18 años; AMZN 92 y 105 trimestres, 24 y 26 años.
+
+Para `ACCOUNTING_BALANCE` (D4): `totalAssets = totalLiab + totalStockholderEquity` cuadra exactamente en todos los periodos de AAPL y AMZN. En TSLA **no cuadra en 7 de 75 trimestres y 9 de 19 años**: la diferencia es la participación no controladora (coincide con `noncontrollingInterestInConsolidatedEntity` en 3 de los trimestres; en el resto ese campo viene null). La regla necesitará tolerancia o esa partida antes de activarse; sigue desactivada.
+
+### Earnings (`Earnings.History`, `Trend`, `Annual`)
+
+- `History` viene indexado por el fin de periodo (`date`, igual que la clave) y trae `reportDate`, `beforeAfterMarket` (`AfterMarket`, `BeforeMarket` o null), `currency`, `epsActual`, `epsEstimate`, `epsDifference` y `surprisePercent`. AAPL 132 entradas, TSLA 66, AMZN 118. `reportDate` nunca es anterior a `date`.
+- **El `date` casa con el fin de periodo de `Financials` trimestral** (131 de 132 en AAPL, 65 de 66 en TSLA, 117 de 118 en AMZN; la que falta es el trimestre aún sin reportar): el join por periodo no falla por un día.
+- **`currency` solo viene en las entradas ya reportadas.** La entrada futura (`epsActual` null) trae `epsEstimate` con `currency` null, en las tres acciones. Ningún otro campo da la divisa de esa estimación: `Trend` no la trae y la divisa de `Financials` o la de cotización serían suposiciones. Limitación sistemática del proveedor: la fila de calendario se escribe, `eps_estimate` y `estimate_currency` quedan NULL y no se emite finding.
+- `revenue_estimate` no está en `History`. `Trend` trae `revenueEstimateAvg` por periodo (`0q`, `+1q`, `0y`, `+1y`) pero sin divisa y con otra definición que `epsEstimate` (TSLA 2026-06-30: `Trend.earningsEstimateAvg` 0,5367 frente a `History.epsEstimate` 0,32), así que no se usa: `revenue_estimate` queda NULL.
+- `Annual` solo trae `epsActual` por año: no hay nada que guardar.
+
+### `AnalystRatings`, `SharesStats`, `Technicals`
+
+- `AnalystRatings` (AAPL, TSLA, AMZN): `Rating`, `TargetPrice`, `StrongBuy`, `Buy`, `Hold`, `Sell`, `StrongSell`. No trae divisa del precio objetivo (propuesta P17), ni mínimo y máximo, ni número de analistas.
+- `SharesStats` trae `SharesOutstanding`, `SharesFloat`, `PercentInsiders`, `PercentInstitutions` y los campos de short interest, **que vienen todos null** (`SharesShort`, `SharesShortPriorMonth`, `ShortRatio`, `ShortPercentOutstanding`). El short interest está en **`Technicals.SharesShort`** y `Technicals.SharesShortPriorMonth` (AAPL 120.763.539 y 128.753.092). Sin fecha de liquidación, como decía la documentación. `General.UpdatedAt` es una fecha (`2026-10-11`).
+
+### Holders e insiders
+
+- `Holders` tiene `Institutions` y `Funds`, cada uno con 20 entradas indexadas `"0".."19"`: `name`, `date`, `totalShares` (% de las acciones), `totalAssets` (% de la cartera del holder), `currentShares`, `change` y `change_p`. **Sin id estable de holder** (confirma P6 e). Cada holder trae su propia fecha: las instituciones comparten una (`2026-06-30`) y los fondos tienen varias (`2026-06-30`, `2026-08-31`, `2026-09-30`). Los 20 nombres de cada bloque son distintos también tras normalizar.
+- `InsiderTransactions`: `{}` en AAPL; 20 transacciones en TSLA y 20 en AMZN con `date`, `ownerCik` (siempre null), `ownerName`, `transactionDate`, `transactionCode` (`P`, `S`), `transactionAmount`, `transactionPrice`, `transactionAcquiredDisposed` (`A`/`D`), `postTransactionAmount` (siempre null) y `secLink`. **Sin id de transacción**: `secLink` es por filing y a veces null. **24 de las 40 transacciones traen `transactionAmount` null** (y `secLink` null): sin cantidad no se pueden crear (`shares_transacted` NOT NULL). `transactionAmount` no lleva signo y el sentido va aparte (propuesta P18).
+
+### Noticias (`news`)
+
+Lista de 10 artículos con `date` (ISO con zona), `title`, `content`, `link`, `symbols`, `tags` y `sentiment {polarity, neg, neu, pos}` (números); sin `summary` ni `publisher`, como decía P8. Ninguno de los 40 artículos trae `link`, `title` o `date` vacíos. 6 de las 33 urls distintas aparecen en más de un payload (la misma noticia etiquetada con varios símbolos). Con la clave demo responden los cuatro símbolos.
