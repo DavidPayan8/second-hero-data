@@ -92,7 +92,7 @@ Requisito cerrado al inicio (trazabilidad, evitar look-ahead bias). `period_end`
 
 Descartados: `unknown`/`null` (si no sabes procedencia es `estimated` o es bug de ingesta); `backfilled`/`migrated` (eso es metadata de ingesta, otro eje). Aplica igual a `SHARES_OUTSTANDING`.
 
-**Nota de realidad:** EODHD no siempre da la fecha de publicación real de cada línea histórica. Donde falte, fallback (`period_end` + ~45 días) marcado como `estimated`. El modelo permite point-in-time desde el día uno porque retrofitear bitemporalidad con datos ya dentro es una migración muy dolorosa.
+**Nota de realidad:** EODHD puede guardar una cifra **reexpresada** con la fecha de la presentación **original** (visto en AAPL FY2009 con la SEC). Eso es look-ahead escondido: el cruce con la SEC lo detecta (`decisiones-modelo-validacion.md` §7) y su frecuencia se mide con el plan de pago antes de decidir si se corrige `reported_at`. Además, EODHD no siempre da la fecha de publicación real de cada línea histórica. Donde falte, fallback (`period_end` + ~45 días) marcado como `estimated`. El modelo permite point-in-time desde el día uno porque retrofitear bitemporalidad con datos ya dentro es una migración muy dolorosa.
 
 ---
 
