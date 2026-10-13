@@ -158,6 +158,12 @@ Decidido al implementar la migración `003_hechos` (2026-10-10, propuesta P5). L
 
 **Dos dividendos con la misma fecha ex** (ordinario y extraordinario el mismo día) no caben en la clave. Si una misma respuesta del proveedor trae dos o más filas para el mismo `(security, ex_date)`, el escritor **no escribe esa fecha** y emite el finding `DIVIDEND_SAME_EX_DATE` (`structural`, `warning`) con todas las filas en `detail`, para revisión. Como la fila no existe, el finding apunta al crudo: `target_table='raw_payload'`. No se elige una al azar ni se suman. En 5 valores y 301 dividendos capturados no ocurre ni una vez; si aparece con frecuencia, se amplía el modelo.
 
+**Fuente única: el listing primario** (2026-10-13). El proveedor devuelve dividendos y splits por símbolo, y una security puede tener varios listings (P12; p. ej. `AAPL.US` y `0R2V.LSE`). Si cada payload escribiera sobre la security, dos listings que discrepen harían oscilar el evento y emitirían `CORPORATE_EVENT_CHANGED` en cada captura. Por eso **solo se capturan y se escriben `div`/`splits` del listing primario**; un payload de otro listing de la misma security se marca leído y se salta (se cuenta). Si cambia el primario, la siguiente captura usa el nuevo, y una diferencia real con lo guardado sale como `CORPORATE_EVENT_CHANGED`, que es lo que debe pasar.
+
+**Respuestas incompletas o contradictorias, siempre con finding (nunca en silencio):**
+- Dos splits con la misma fecha y ratios distintos en una respuesta → no se escribe esa fecha y se emite **`SPLIT_SAME_EX_DATE`** (`structural`, `warning`, objetivo `raw_payload`), igual que `DIVIDEND_SAME_EX_DATE`.
+- Un dividendo sin `unadjustedValue` o sin `currency` → no se crea (criterio de NULL: un importe sin unidad es peligroso) y se emite **`CORPORATE_EVENT_INCOMPLETE`** (`structural`, `warning`, objetivo `raw_payload`, con las filas en `detail`). Un dato que se descarta tiene que dejar rastro.
+
 **Correcciones del proveedor.** Un hecho puntual no debería cambiar. Si un refetch trae un evento ya guardado con otro valor (`amount_native`/`currency` en un dividendo, numerador/denominador en un split), el escritor **actualiza** la fila y emite el finding `CORPORATE_EVENT_CHANGED` (`data_quality`, `warning`) con el valor anterior y el nuevo en `detail`. Se acepta la corrección, pero queda rastro y se revisa. Los cambios en metadatos (`period`, `declaration_date`, `record_date`, `payment_date`) se actualizan sin finding.
 
 **Verificado: el `date` de `div/` es la fecha ex.** En `div/AAPL.US` (92 filas) la distancia de `date` a `recordDate` sigue los ciclos de liquidación de EEUU: 4 días hábiles en T+5 (hasta 1995), 2 en T+3 (hasta 2017), 1 en T+2 (hasta 28/05/2024) y 0 en T+1. Las desviaciones de un día caen junto al 11 de noviembre (Veterans Day: la bolsa abre pero no se liquida); explicación coherente, no contrastada con un calendario.
@@ -172,7 +178,14 @@ Decidido al implementar la migración `003_hechos` (2026-10-10, propuesta P5). L
 - **Divisa fraccionaria (GBX y similares) = fila propia** en `fx_rates`, con su tipo a EUR ya correcto. El "/100 de los peniques de Londres" vive **dentro del tipo de cambio de esa fila**, no en una rama de código. Cero casos especiales en el materializador.
 - **Forward-fill** para días sin tipo (fines de semana, festivos): la conversión toma el `fx` con fecha `<= date` más reciente.
 
-Estructura: entidad de referencia global, PK `(currency, date)`, `rate_to_base`.
+Estructura: entidad de referencia global, PK `(currency, date)`, `units_per_base`.
+
+### 6.b Qué se guarda en `fx_rates` (2026-10-13, al escribir el escritor de FX)
+
+- **`units_per_base` = la cotización `EURxxx` del proveedor tal cual** (`EURUSD.FOREX` cierra en ~1,12 → `USD` guarda 1,12): unidades de la divisa por 1 EUR. Convertir a EUR = **dividir** por ella. Antes se llamaba `rate_to_base` y se pensó como `1 / cierre`; eso es guardar un derivado de la cotización, y además `1/x` en `numeric` redondea, de modo que el valor guardado ya no coincide con el del payload. Se renombra (migración nueva) y se guarda el primitivo.
+- **`GBX` = cotización `EURGBP` × 100** (peniques por 1 EUR): multiplicación exacta, sin redondeo. Factor en `src/fx/subunits.ts` (§6.a).
+- **`EUR` no tiene filas.** Es la base: por definición, 1 EUR = 1 EUR. El materializador trata `currency = base` como factor 1 sin buscar fila. Escribir filas de un 1 constante sería guardar lo derivable.
+- **Revisiones del proveedor:** como en precios (§5): en las últimas N sesiones se aceptan en silencio (el cierre del día en curso se mueve mientras cotiza); más atrás se aceptan y emiten `PRICE_REVISED` con objetivo `{currency, date}`. N en un único sitio, provisional.
 
 ### 6.a Precio en subunidad y dividendo en unidad (P2, 2026-10-12)
 

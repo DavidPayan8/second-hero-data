@@ -121,7 +121,7 @@ En v2 se guardaba como columna primitiva, lo cual era **incoherente** con `chang
 
 - Verificar shape real de `InsiderTransactions` y existencia de `provider_txn_id` contra doc EODHD en vivo (provisional). Decidir fuente: Form 4 o feed plano.
 - Confirmar con payload que `Holders` no trae id estable (la doc dice que no).
-- Confirmar con payload la dirección de `rating_mean` (la doc dice 5 = Strong Buy) y que los recuentos cuadran con ella.
+- ~~Confirmar con payload la dirección de `rating_mean`~~ ✅ 5 = Strong Buy: el `Rating` de AAPL (3,7955) coincide con la media ponderada de sus recuentos en esa orientación (con 1 = Strong Buy daría 2,2045).
 - Confirmar con payload que el short interest no trae fecha de liquidación.
 
 ---

@@ -47,7 +47,7 @@ erDiagram
   ANALYST_CONSENSUS {
     bigint security_id PK "FK"
     date as_of_date PK "eje snapshot-temporal, historico conservado"
-    numeric rating_mean "tal cual del proveedor; direccion NO fijada aqui (doc: 5=Strong Buy). VERIFICAR"
+    numeric rating_mean "tal cual del proveedor; verificado con AAPL: 5=Strong Buy"
     int strong_buy "nullable, recuento"
     int buy "nullable"
     int hold "nullable"
@@ -105,5 +105,5 @@ erDiagram
 
 1. `holder_ref` (id estable de filer): existencia en EODHD sin verificar.
 2. `provider_txn_id`: existencia en EODHD sin verificar; define si el dedup es por id o por clave compuesta fallback.
-3. Dirección de escala `rating_mean` (1=Strong Buy asumido) — verificar contra doc en vivo.
+3. ~~Dirección de escala `rating_mean`~~ ✅ 5 = Strong Buy, verificado con el payload real de AAPL (2026-10-12).
 4. `holder_type` como `CHECK` inline (decidido: se queda; subir a tabla solo si crece).

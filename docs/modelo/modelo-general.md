@@ -252,7 +252,7 @@ erDiagram
   FX_RATES {
     text currency PK "ISO-4217 + fraccionarias (GBX)"
     date date PK
-    numeric rate_to_base "a EUR"
+    numeric units_per_base "unidades de la divisa por 1 EUR (cotizacion EURxxx tal cual)"
   }
 
   LISTING_TICKER_CHANGE {
@@ -300,7 +300,7 @@ erDiagram
   ANALYST_CONSENSUS {
     bigint security_id PK "FK"
     date as_of_date PK "snapshot-temporal"
-    numeric rating_mean "tal cual; direccion sin fijar (doc: 5=Strong Buy)"
+    numeric rating_mean "tal cual; verificado 5=Strong Buy"
     int strong_buy "recuentos x5 (buy, hold, sell, strong_sell), nullable"
     int num_analysts "nullable"
     numeric target_mean

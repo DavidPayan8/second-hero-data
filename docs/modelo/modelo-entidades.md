@@ -140,7 +140,7 @@ erDiagram
   FX_RATES {
     text currency PK "ISO-4217 + fraccionarias (GBX)"
     date date PK
-    numeric rate_to_base "a EUR"
+    numeric units_per_base "unidades de la divisa por 1 EUR (cotizacion EURxxx tal cual)"
   }
 ```
 
