@@ -103,6 +103,12 @@ Descartados: `unknown`/`null` (si no sabes procedencia es `estimated` o es bug d
 El precio ajustado **no es un dato, es una vista**: cambia cada vez que hay un nuevo split (el ajuste se propaga hacia atrás sobre toda la serie). El bruto no cambia nunca.
 
 - **`prices_daily` → LISTING.** Guarda **solo el precio bruto**, en divisa de cotización. Inmutable.
+  - **Qué significa "inmutable" (P13, 2026-10-13):** que **nosotros** nunca reescribimos el bruto (ni por splits, ni por dividendos, ni por nada que derivemos). **No** significa que el proveedor no pueda corregirlo. Visto en vivo: la primera captura de una sesión trae un volumen provisional que EODHD corrige después (`AAPL.US` 2026-10-09: 37.821.157 → 37.881.200, con el `close` igual; `VTI.US` igual). Quedarse con el primer valor visto guardaría para siempre el provisional.
+  - **Regla:** una revisión del proveedor **se acepta** (se actualiza la fila), con la misma lógica que `CORPORATE_EVENT_CHANGED` en dividendos y splits:
+    - Cambio **solo de `volume`** en las **últimas N sesiones** de ese listing: se acepta **en silencio**. Es el asentamiento normal del volumen consolidado. N = 5, provisional, en un único sitio.
+    - Cualquier cambio de `open`/`high`/`low`/`close`, o de `volume` fuera de esa ventana: se acepta y emite **`PRICE_REVISED`** (`warning`, objetivo `{listing_id, date}`, `detail` con anterior y nuevo; como en `CORPORATE_EVENT_CHANGED`, si ya hay uno abierto se conserva el `old` del primero).
+    - El valor anterior no se pierde del todo: sigue en el `RAW_PAYLOAD` de la captura anterior mientras dure su retención.
+  - **Descartado:** conservar siempre el guardado (deja el volumen provisional y un finding por día reciente de cada símbolo); retrasar la captura de la última sesión (el screener necesita el cierre de ayer).
 - **Series ajustadas** (por splits; y por splits+dividendos / total return) → **derivadas** de bruto + eventos, materializadas en la capa de lectura.
 
 **Uso de cada serie:**
