@@ -78,6 +78,19 @@ CHECK: `(status = 'open') = (resolved_at IS NULL)` y `(status = 'open') = (resol
 
 ---
 
+## 7. Cierre automático, alcance de `YOY_JUMP` y `ACCOUNTING_BALANCE` (2026-10-13, Fase 4)
+
+**Cierre automático de findings de estado.** Hay dos clases de reglas:
+- **De estado**: el runner las evalúa sobre los datos actuales (`STALENESS`, `YOY_JUMP`, `CURRENCY_COHERENCE`, `ACCOUNTING_BALANCE`, `SECOND_SOURCE_MISMATCH`). Si en una **pasada completa** de una regla un objetivo con finding abierto ya no cumple la condición, el runner lo cierra como `dismissed` con `resolved_by = 'runner'` y `resolved_at = now()`. Sin esto, un `error` seguiría bloqueando en VISTAS un dato ya corregido hasta que alguien lo cerrara a mano. Una pasada parcial (`--rules` o subconjunto de objetivos) **no** cierra nada: solo puede cerrar lo que ha evaluado.
+- **De evento**: las emite el normalizador por algo que ocurrió (`*_REVISED`, `CORPORATE_EVENT_CHANGED`, `*_SAME_EX_DATE`, identidad, `*_UNMAPPED`, `*_INCOMPLETE`). Solo las cierra una persona: el hecho ocurrió aunque el dato ya esté bien.
+- La clase la define que la regla tenga lógica en el runner; no hace falta columna nueva.
+
+**`YOY_JUMP` solo en periodos recientes.** En los primeros años de AAPL, TSLA y AMZN salen 23 avisos que son crecimiento real desde una base pequeña. Sobre todo el universo serían miles de avisos históricos que nadie va a revisar. La regla se limita a periodos con `period_end` en los **últimos 3 años** (lo que el screener enseña), provisional y en el fichero de tolerancias de D5. Al aplicarlo, los 23 de la base de desarrollo los cierra el propio runner (fuera de alcance = ya no se cumple la condición).
+
+**`ACCOUNTING_BALANCE` sigue apagada hasta calibrarla con el universo.** Con 3 empresas no se puede fijar ni la fórmula ni la severidad. En TSLA el hueco es de un solo signo y la participación no controladora solo explica 7 de 16 periodos. La hipótesis a comprobar es el **patrimonio temporal** (*redeemable noncontrolling interests*, entre el pasivo y el patrimonio, que TSLA tuvo esos años). Con el plan de pago se mide sobre unas cientos de empresas qué campos del proveedor cierran el balance, y entonces se decide la fórmula y si es `error` o `warning`.
+
+---
+
 ## Flujo
 
 ```
