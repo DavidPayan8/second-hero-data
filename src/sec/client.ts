@@ -46,11 +46,12 @@ export function secFetcher(options: { userAgent: string; baseUrl?: string; timeo
   };
 }
 
-export async function captureSec(ciks: string[], options: { scope?: string; userAgent?: string; baseUrl?: string; minIntervalMs?: number; log?: (m: string) => void } = {}): Promise<CaptureSummary> {
+export async function captureSec(ciks: string[], options: { scope?: string; userAgent?: string; baseUrl?: string; minIntervalMs?: number; sleep?: (ms: number) => Promise<void>; now?: () => number; log?: (m: string) => void } = {}): Promise<CaptureSummary> {
   const userAgent = requireSecUserAgent(options.userAgent);
   const jobs = secJobs(ciks);
   return capture(options.scope ?? 'companyfacts', jobs, {
     provider: SEC_PROVIDER, fetcher: secFetcher({ userAgent, ...(options.baseUrl ? { baseUrl: options.baseUrl } : {}) }),
     minIntervalMs: options.minIntervalMs ?? SEC_MIN_INTERVAL_MS, budget: jobs.length, maxAttempts: 1, ...(options.log ? { log: options.log } : {}),
+    ...(options.sleep ? { sleep: options.sleep } : {}), ...(options.now ? { now: options.now } : {}),
   });
 }

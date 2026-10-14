@@ -13,6 +13,7 @@ export interface CaptureOptions extends Partial<ClientOptions> {
   maxAttempts?: number; // intentos por trabajo; cada intento es una fila nueva en raw_payload
   retryDelayMs?: number;
   sleep?: (ms: number) => Promise<void>;
+  now?: () => number; // reloj en ms (por defecto Date.now); se inyecta junto con sleep para no depender del tiempo real en los tests
   log?: (message: string) => void;
   // Otro proveedor con el mismo mecanismo de captura (p. ej. la SEC para la 2ª fuente): su nombre en ingestion_run.provider, la
   // función que hace la llamada de un trabajo (por defecto, EODHD con su token) y la pausa mínima entre llamadas (límite de peticiones).
@@ -90,6 +91,7 @@ export async function capture(scope: string, jobs: Job[], options: CaptureOption
   const budget = options.budget ?? config.runBudget;
   const maxAttempts = options.maxAttempts ?? config.maxAttempts;
   const retryDelayMs = options.retryDelayMs ?? config.retryDelayMs;
+  const now = options.now ?? Date.now;
   const sleep = options.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const log = options.log ?? (() => {});
   const provider = options.provider ?? PROVIDER;
@@ -123,8 +125,8 @@ export async function capture(scope: string, jobs: Job[], options: CaptureOption
     jobLoop: for (const job of jobs) {
       for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         if (spent + job.cost > budget) { stoppedBy = 'budget'; break jobLoop; }
-        if (minIntervalMs > 0) { const wait = lastCallAt + minIntervalMs - Date.now(); if (wait > 0) await sleep(wait); }
-        lastCallAt = Date.now();
+        if (minIntervalMs > 0) { const wait = lastCallAt + minIntervalMs - now(); if (wait > 0) await sleep(wait); }
+        lastCallAt = now();
         const result = await fetcher(job);
         spent += job.cost;
         attempts++;

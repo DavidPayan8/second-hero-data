@@ -89,11 +89,14 @@ describe('captura de la SEC', () => {
   test('una llamada por CIK (10 dígitos), con User-Agent, sin token, como provider "sec", y con pausa mínima entre llamadas', async () => {
     facts.set('0000320193', body({ Assets: [instant('2025-09-27', 1)] }));
     facts.set('0001318605', body({ Assets: [instant('2025-12-31', 2)] }));
-    const s = await captureSec(['320193', '0001318605', '0000320193'], { userAgent: UA, baseUrl: base, scope: 'test:sec', minIntervalMs: 60 });
+    // reloj y pausa inyectados: el test no depende del tiempo real (la pausa solo avanza un reloj virtual)
+    let clock = 1000;
+    const slept: number[] = [];
+    const s = await captureSec(['320193', '0001318605', '0000320193'], { userAgent: UA, baseUrl: base, scope: 'test:sec', minIntervalMs: 60, now: () => clock, sleep: async (ms) => { slept.push(ms); clock += ms; } });
     expect(s).toMatchObject({ status: 'ok', ok: 2, errors: 0, jobsDone: 2 }); // el CIK repetido se pide una vez
     expect(seen.map((x) => x.path)).toEqual(['/api/xbrl/companyfacts/CIK0000320193.json', '/api/xbrl/companyfacts/CIK0001318605.json']);
     expect(seen.every((x) => x.ua === UA)).toBe(true);
-    expect(seen[1]!.at - seen[0]!.at).toBeGreaterThanOrEqual(45);
+    expect(slept).toEqual([60]); // una pausa entre la 1ª y la 2ª llamada, ninguna antes de la 1ª
     const run = (await pool.query('SELECT provider, scope, status, req_count FROM ingestion_run WHERE ingestion_run_id = $1', [s.runId])).rows[0];
     expect(run).toEqual({ provider: 'sec', scope: 'test:sec', status: 'ok', req_count: 2 });
     const raws = (await pool.query('SELECT endpoint, provider_symbol, params, http_status FROM raw_payload WHERE ingestion_run_id = $1 ORDER BY raw_payload_id', [s.runId])).rows;
@@ -259,6 +262,44 @@ describe('SECOND_SOURCE_MISMATCH', () => {
     expect((await findings())).toHaveLength(1);
     expect((await findings())[0]!.detail.mismatches[0]).toMatchObject({ sec: '900', sec_accn: 'reexpresada' });
     expect((await row(b)).src).toBe('provider');
+  });
+
+  test('clasificación: coincide con la original = cross_checked; con una posterior = kind "restated" (con su filed y accn); con ninguna = "value"', async () => {
+    const co = await makeCompany('0000000109');
+    const original = await fund(co, '2025-09-27', 'A', { total_assets: '1000' }, { reportedAt: '2025-10-31' });
+    const restated = await fund(co, '2024-09-27', 'A', { total_assets: '900' }, { reportedAt: '2024-10-31' });
+    const neither = await fund(co, '2023-09-27', 'A', { total_assets: '700' }, { reportedAt: '2023-10-31' });
+    await storeFacts('0000000109', body({ Assets: [
+      instant('2025-09-27', 1000, { accn: 'a-orig', filed: '2025-10-30' }),
+      instant('2024-09-27', 1000, { accn: 'b-orig', filed: '2024-10-30' }), instant('2024-09-27', 900, { accn: 'b-post', filed: '2025-10-30' }),
+      instant('2023-09-27', 1000, { accn: 'c-orig', filed: '2023-10-30' }), instant('2023-09-27', 950, { accn: 'c-post', filed: '2024-10-30' }),
+    ] }));
+    await run();
+    expect((await row(original)).src).toBe('cross_checked');
+    expect((await row(restated)).src).toBe('provider');
+    const f = await findings();
+    expect(f).toHaveLength(2);
+    const byId = (id: string) => f.find((x) => x.target_key.fundamentals_id === Number(id))!;
+    expect(byId(restated).detail).toMatchObject({ kind: 'restated', mismatches: [{ metric: 'total_assets', kind: 'restated', provider: '900', sec: '1000', sec_accn: 'b-orig', sec_restated: { value: '900', filed: '2025-10-30', accn: 'b-post', form: '10-K' } }] });
+    expect(byId(neither).detail).toMatchObject({ kind: 'value', mismatches: [{ kind: 'value' }] });
+    expect(byId(neither).detail.mismatches[0]).not.toHaveProperty('sec_restated');
+  });
+
+  test('Q4 (trimestral que cierra el ejercicio): ingresos y beneficio no se cruzan; el activo se compara con el 10-K', async () => {
+    const co = await makeCompany('0000000110');
+    const ok = await fund(co, '2025-09-30', 'Q', { revenue: '1', net_income: '1', total_assets: '1000' }); // ingresos y beneficio absurdos: se ignoran
+    const bad = await fund(co, '2024-09-30', 'Q', { revenue: '1', total_assets: '500' });
+    await storeFacts('0000000110', body({
+      Revenues: [annual('2025-09-27', 400), annual('2024-09-28', 300, { start: '2023-10-01' })], NetIncomeLoss: [annual('2025-09-27', 100)],
+      Assets: [instant('2025-09-27', 1000), instant('2024-09-28', 800, { accn: 'prev', filed: '2024-10-31' })],
+    }));
+    expect((await run()).ran.SECOND_SOURCE_MISMATCH).toMatchObject({ compared: 2, crossChecked: 1, mismatched: 1 });
+    expect((await row(ok)).src).toBe('cross_checked');
+    expect((await row(bad)).src).toBe('provider');
+    const f = await findings();
+    expect(f).toHaveLength(1);
+    expect(f[0]!.detail.mismatches).toHaveLength(1);
+    expect(f[0]!.detail.mismatches[0]).toMatchObject({ metric: 'total_assets', sec_form: '10-K', sec: '800' });
   });
 
   test('una cifra fuera de tolerancia basta para no marcar la fila, aunque las demás cuadren; una magnitud sin dato en la SEC se ignora', async () => {

@@ -30,7 +30,8 @@ const DURATION: Record<SecMetric, boolean> = { revenue: true, net_income: true, 
 const FORM = { A: '10-K', Q: '10-Q' } as const;
 const DURATION_DAYS = { A: [350, 380], Q: [80, 100] } as const;
 
-export interface SecFact { metric: SecMetric; tag: string; value: string; end: string; form: string; filed: string; accn: string | null }
+// `later`: las presentaciones posteriores del mismo cierre y etiqueta (la misma cifra repetida o reexpresada en informes siguientes), por `filed`.
+export interface SecFact { metric: SecMetric; tag: string; value: string; end: string; form: string; filed: string; accn: string | null; later: SecFact[] }
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const days = (a: string, b: string) => Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / 864e5);
@@ -47,8 +48,7 @@ export function findFacts(body: unknown, metric: SecMetric, periodEnd: string, p
   for (const tag of SEC_TAGS[metric]) {
     const node = gaap[tag];
     const usd = isObj(node) && isObj(node.units) && Array.isArray(node.units.USD) ? node.units.USD : [];
-    let best: SecFact | null = null;
-    let bestGap = Infinity;
+    const found: { fact: SecFact; gap: number }[] = [];
     for (const e of usd) {
       if (!isObj(e) || typeof e.end !== 'string' || e.form !== FORM[periodType] || (typeof e.val !== 'number' && typeof e.val !== 'string')) continue;
       const gap = Math.abs(days(e.end, periodEnd));
@@ -58,13 +58,18 @@ export function findFacts(body: unknown, metric: SecMetric, periodEnd: string, p
         const d = days(e.start, e.end);
         if (d < DURATION_DAYS[periodType][0] || d > DURATION_DAYS[periodType][1]) continue;
       }
-      const filed = typeof e.filed === 'string' ? e.filed : '';
-      const closer = reportedAt && best && filed && best.filed ? Math.abs(days(filed, reportedAt)) < Math.abs(days(best.filed, reportedAt)) : filed > (best?.filed ?? '');
-      if (!best || gap < bestGap || (gap === bestGap && closer)) {
-        best = { metric, tag, value: String(e.val), end: e.end, form: String(e.form), filed, accn: typeof e.accn === 'string' ? e.accn : null };
-        bestGap = gap;
-      }
+      found.push({ gap, fact: { metric, tag, value: String(e.val), end: e.end, form: String(e.form), filed: typeof e.filed === 'string' ? e.filed : '', accn: typeof e.accn === 'string' ? e.accn : null, later: [] } });
     }
+    if (!found.length) continue;
+    const minGap = Math.min(...found.map((x) => x.gap));
+    const sameEnd = found.filter((x) => x.gap === minGap).map((x) => x.fact);
+    // La original: el `filed` más cercano a reportedAt (sin reportedAt, la presentada más tarde); empate, la más antigua.
+    const distance = (x: SecFact) => (reportedAt && x.filed ? Math.abs(days(x.filed, reportedAt)) : 0);
+    const best = sameEnd.reduce((p, x) => {
+      if (reportedAt) return distance(x) < distance(p) || (distance(x) === distance(p) && x.filed < p.filed) ? x : p;
+      return x.filed > p.filed ? x : p;
+    });
+    best.later = sameEnd.filter((x) => x !== best && x.filed > best.filed).sort((p, q) => p.filed.localeCompare(q.filed));
     if (best) out.push(best);
   }
   return out;
@@ -84,3 +89,8 @@ export function withinTolerance(provider: string, sec: string, tolerance: number
   if (!Number.isFinite(a) || !Number.isFinite(b)) return false;
   return b === 0 ? a === 0 : Math.abs(a - b) <= tolerance * Math.abs(b);
 }
+
+// ¿El cierre de una fila trimestral es el cierre del ejercicio? El cuarto trimestre no tiene 10-Q propio: se sabe porque la SEC
+// tiene un 10-K con ingresos o beneficio de un año que acaba ese día (decisiones-modelo-validacion.md 7).
+export const isFiscalYearEnd = (body: unknown, periodEnd: string, windowDays = 0): boolean =>
+  findFacts(body, 'revenue', periodEnd, 'A', windowDays).length > 0 || findFacts(body, 'net_income', periodEnd, 'A', windowDays).length > 0;

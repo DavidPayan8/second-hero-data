@@ -1,5 +1,5 @@
 import { SEC_ENDPOINT, SEC_PROVIDER, cik10 } from '../sec/client.js';
-import { ATTRIBUTABLE_NET_INCOME_TAG, SEC_METRICS, findFacts, withinTolerance, type SecMetric } from '../sec/facts.js';
+import { ATTRIBUTABLE_NET_INCOME_TAG, SEC_METRICS, findFacts, isFiscalYearEnd, withinTolerance, type SecMetric } from '../sec/facts.js';
 import { VALIDATION_CONFIG as CFG } from './config.js';
 import { RUNNER_ACTOR, emitCandidates, type EmitCounts } from './emit.js';
 import type { RuleContext } from './runner.js';
@@ -16,6 +16,10 @@ import type { RuleContext } from './runner.js';
 export interface SecCounts extends EmitCounts { rows: number; compared: number; crossChecked: number; mismatched: number; noPayload: number; noFacts: number }
 
 interface Row { fundamentals_id: string; cik: string; period_end: string; reported_at: string; period_type: 'A' | 'Q'; source: string; revenue: string | null; net_income: string | null; total_assets: string | null }
+
+// Tipo del finding de una fila: el de todos sus mismatches si coinciden ('restated', 'consolidated'); si hay mezcla o alguno no coincide con
+// ninguna presentación, 'value'. Cada mismatch conserva el suyo.
+const rowKind = (ms: { kind: string }[]) => (ms.every((m) => m.kind === ms[0]!.kind) && ms[0]!.kind !== 'value' ? ms[0]!.kind : 'value');
 
 export async function secSecondSource(ctx: RuleContext): Promise<SecCounts> {
   const rows = (await ctx.c.query<Row>(
@@ -50,22 +54,32 @@ export async function secSecondSource(ctx: RuleContext): Promise<SecCounts> {
     for (const metric of SEC_METRICS) {
       const mine = row[metric as SecMetric];
       if (mine === null) continue;
-      const facts = findFacts(body, metric, row.period_end, row.period_type, CFG.secPeriodWindowDays, row.reported_at);
+      // Q4 (fila trimestral que cierra el ejercicio): no hay 10-Q. Los flujos (ingresos, beneficio) no se cruzan; el activo, que es un
+      // saldo a fecha, se compara con el 10-K.
+      const q4 = row.period_type === 'Q' && isFiscalYearEnd(body, row.period_end, CFG.secPeriodWindowDays);
+      if (q4 && metric !== 'total_assets') continue;
+      const facts = findFacts(body, metric, row.period_end, q4 ? 'A' : row.period_type, CFG.secPeriodWindowDays, row.reported_at);
       // Ingresos y activo: basta con coincidir con cualquiera de sus etiquetas. Beneficio: solo cuenta el atribuible a la matriz; sin
       // él en la SEC no hay con qué comparar (el consolidado solo sirve para clasificar el mismatch como 'consolidated').
       const counting = metric === 'net_income' ? facts.filter((x) => x.tag === ATTRIBUTABLE_NET_INCOME_TAG) : facts;
       const shown = counting[0];
       if (!shown) continue;
       comparedMetrics++;
-      if (counting.some((x) => withinTolerance(mine, x.value, CFG.secTolerance))) continue;
-      const consolidated = metric === 'net_income' && facts.some((x) => x.tag !== ATTRIBUTABLE_NET_INCOME_TAG && withinTolerance(mine, x.value, CFG.secTolerance));
+      const matches = (x: { value: string }) => withinTolerance(mine, x.value, CFG.secTolerance);
+      if (counting.some(matches)) continue; // coincide con la presentación original: cuadra
+      // No coincide con la original. ¿Coincide con una presentación posterior del mismo periodo (el proveedor trae la cifra
+      // reexpresada bajo la fecha original)? Entonces 'restated', con el filed y el accn de esa presentación.
+      const later = counting.flatMap((x) => x.later).sort((p, q) => p.filed.localeCompare(q.filed)).find(matches);
+      const consolidated = metric === 'net_income' && facts.some((x) => x.tag !== ATTRIBUTABLE_NET_INCOME_TAG && matches(x));
+      const kind = later ? 'restated' : consolidated ? 'consolidated' : 'value';
       const others = facts.filter((x) => x !== shown);
-      mismatches.push({ metric, kind: consolidated ? 'consolidated' : 'value', provider: mine, sec: shown.value, sec_tag: shown.tag, sec_end: shown.end, sec_form: shown.form, sec_filed: shown.filed, sec_accn: shown.accn,
+      mismatches.push({ metric, kind, provider: mine, sec: shown.value, sec_tag: shown.tag, sec_end: shown.end, sec_form: shown.form, sec_filed: shown.filed, sec_accn: shown.accn,
+        ...(later ? { sec_restated: { tag: later.tag, value: later.value, form: later.form, filed: later.filed, accn: later.accn } } : {}),
         ...(others.length ? { sec_other_tags: others.map((x) => ({ tag: x.tag, value: x.value })) } : {}) });
     }
     if (!comparedMetrics) { out.noFacts++; continue; }
     out.compared++;
-    if (mismatches.length) { out.mismatched++; bad.push({ fundamentals_id: row.fundamentals_id, detail: { kind: mismatches.every((m) => (m as { kind: string }).kind === 'consolidated') ? 'consolidated' : 'value', period_end: row.period_end, period_type: row.period_type, tolerance: CFG.secTolerance, mismatches } }); }
+    if (mismatches.length) { out.mismatched++; bad.push({ fundamentals_id: row.fundamentals_id, detail: { kind: rowKind(mismatches as { kind: string }[]), period_end: row.period_end, period_type: row.period_type, tolerance: CFG.secTolerance, mismatches } }); }
     else {
       cleared.push(row.fundamentals_id);
       if (row.source === 'provider') ok.push(row.fundamentals_id);
