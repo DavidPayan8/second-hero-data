@@ -52,9 +52,9 @@ Un registro `unclassified` en la dimensión canónica contaminaría una tabla de
 
 ---
 
-## 4.b Borrador de la taxonomía (D3) — **pendiente de aprobación de David**
+## 4.b Taxonomía v1 (D3) — **aprobada por David el 2026-10-14**
 
-Propuesta 2026-10-13. Nombres y códigos propios; once sectores y 38 industrias, con cobertura completa para que toda empresa clasificable caiga en alguna industria (una industria NULL debe significar "no sabemos", no "no tiene caso especial"). Las tres industrias que el score trata aparte quedan aisladas: `banking`, `insurance`, `reits`.
+Propuesta 2026-10-13, aprobada sin cambios. Nombres y códigos propios; once sectores y 38 industrias, con cobertura completa para que toda empresa clasificable caiga en alguna industria (una industria NULL debe significar "no sabemos", no "no tiene caso especial"). Las tres industrias que el score trata aparte quedan aisladas: `banking`, `insurance`, `reits`.
 
 | Sector (`code` — nombre) | Industrias (`code` — nombre) |
 |---|---|
