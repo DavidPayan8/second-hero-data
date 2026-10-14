@@ -266,3 +266,15 @@ Contra los `companyfacts` reales de la SEC, el `net_income` de EODHD para TSLA u
 
 La fila bitemporal se compara con la presentación de la SEC cuyo `filed` está más cerca de su `reported_at`. Efecto sobre los 3 findings de AAPL 2008 y 2009: el **FY2008 cuadra** (cerrado por el runner); el **FY2009 anual, el trimestre 2009-06-30 y el Q4 de 2009 siguen sin cuadrar**, y ahora por el motivo contrario: con la presentación original de la SEC el proveedor no coincide (ingresos del FY2009: 42.603 millones del proveedor frente a 36.537 en el 10-K original; beneficio: 8.235 frente a 5.704). Es decir, EODHD guarda para esas filas las cifras reexpresadas aunque el `reported_at` sea el de la fecha original. El Q4 de 2009 (activo) se compara con un 10-Q del 2010-01-25 porque el cierre de ejercicio no tiene 10-Q propio: sigue siendo un falso positivo de formulario. Por la misma razón aparecen 4 filas que antes cuadraban con la presentación más reciente y ahora no: AMZN 2015 (activo, 64.747 frente a 65.444 millones en el 10-K original), AAPL 2009-06-30 (ingresos) y TSLA 2024-03-31 y 2024-06-30 (beneficio). Hay que decidir si el proveedor debe compararse con la reexpresión cuando su fila declara la fecha original; con el plan de pago se podrá medir cuántas filas del universo caen en cada caso.
 
+### Clasificación de los findings del cruce con la SEC: `restated` frente a `value` (2026-10-14, `decisiones-modelo-validacion.md` §7)
+
+Con la clasificación de David (coincide con la presentación original → `cross_checked`; coincide con una posterior del mismo periodo → `kind = 'restated'` con el `filed` y el `accn` de esa presentación; con ninguna → `value`) y con el Q4 tratado aparte (sus ingresos y beneficio no se cruzan; su activo se compara con el 10-K), los **14 findings abiertos** de AAPL, AMZN y TSLA quedan así:
+
+| kind | Filas | Detalle |
+|---|---|---|
+| `restated` | 5 | AMZN 2015 anual y su Q4 (activo; presentación posterior del 2017-02-10), AAPL 2009-06-30 (ingresos y beneficio; posterior del 2010-07-21), TSLA 2024-03-31 y 2024-06-30 (beneficio; posteriores del 2025-04-23 y 2025-07-24). |
+| `value` | 1 | AAPL FY2009 anual: el beneficio coincide con una presentación posterior, pero los ingresos (42.603 M) no coinciden ni con el 10-K original (36.537 M) ni con la reexpresión posterior (42.905 M, a un 0,7 %, fuera del 0,5 %). Al mezclar un `restated` y un `value`, la fila es `value`; cada mismatch conserva el suyo. |
+| `consolidated` | 8 | TSLA (beneficio igual al consolidado), sección anterior. |
+
+Efectos del Q4: el Q4 de AAPL 2009 ya no se compara con un 10-Q (su activo cuadra con el 10-K original y la fila queda `cross_checked`) y el Q4 de AMZN 2015 pasa a compararse con el 10-K, de ahí su finding `restated` junto al anual. Las filas `restated` son las que, en un backtest point-in-time, mostrarían una cifra que se publicó después de su `reported_at`: con el plan de pago hay que medir cuántas son en el universo antes de decidir si se corrige `reported_at`.
+

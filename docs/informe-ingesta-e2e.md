@@ -98,3 +98,6 @@ Resultado de `npm run validate`: 266 filas comparadas; **AAPL queda `cross_check
 ## 7. Actualización del cruce con la SEC (2026-10-14, commit posterior)
 
 Dos cambios decididos por David (`decisiones-modelo-validacion.md` §7): se compara con la presentación de la SEC cuyo `filed` está más cerca del `reported_at` de la fila, y el beneficio solo cuenta si coincide con `NetIncomeLoss`. Estado actual de las filas: AAPL 18 años y 71 trimestres `cross_checked`, AMZN 18 y 73, TSLA 15 y 57. Findings abiertos de `SECOND_SOURCE_MISMATCH`: 14 (AAPL 3 de tipo `value`, AMZN 1, TSLA 8 `consolidated` y 2 `value`). Detalle y lectura en `docs/verificacion-eodhd.md`. Las secciones 3 y 5 describen el estado anterior a este cambio.
+
+Clasificación posterior (2026-10-14, reexpresiones y Q4): de los 14 findings abiertos, 5 son `restated`, 1 `value` y 8 `consolidated`; ver `docs/verificacion-eodhd.md`.
+
