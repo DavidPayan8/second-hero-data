@@ -167,7 +167,7 @@ Total: **36 tablas**.
 
 ## Fase 3 — Normalizador
 
-**Pendiente heredado de la Fase 2 (D3):** seed de `SECTOR` e `INDUSTRY` y de `SOURCE_SECTOR_MAP`. Necesita las etiquetas reales de sector e industria de `fundamentals` (C15), que el plan Free no da. Es lo primero de la Fase 3: el borrador propio (~11 sectores, sin copiar nombres ni códigos GICS, con Banking, Insurance y REITs como industrias) lo aprueba David.
+**Pendiente heredado de la Fase 2 (D3):** ~~seed de `SECTOR` e `INDUSTRY`~~ (cargado el 2026-10-14, `db/seeds/006_taxonomia.sql`) y seed de `SOURCE_SECTOR_MAP`. Necesita las etiquetas reales de sector e industria de `fundamentals` (C15), que el plan Free no da. Es lo primero de la Fase 3: el borrador propio (~11 sectores, sin copiar nombres ni códigos GICS, con Banking, Insurance y REITs como industrias) lo aprueba David.
 
 Especificación: `decisiones-modelo-ingesta.md`, `-referencia`, `-identidad`, `-taxonomia`, `-auditoria`.
 
@@ -231,7 +231,7 @@ Especificación: `decisiones-modelo-validacion.md`. El runner lee las reglas `en
 - `SHEL.LSE` con `quote_currency = 'GBX'` y filas GBX en `FX_RATES`.
 - `VTI.US` con `company_id` NULL, perfil ETF y allocation por sector con `sector_id` donde haya mapeo.
 - `META.US`: un único listing con su cambio de ticker registrado (si la historia lo cubre).
-- `JPM.US` y `O.US` en las industrias Banking y REITs (si el seed de D3 las tiene).
+- `JPM.US` y `O.US` en las industrias Banking y REITs (el seed de D3 ya tiene `banking` y `reits`).
 - Segunda pasada idempotente.
 
 **Estado (2026-10-14):** hecha en parte con el plan Free y la demo (`docs/informe-ingesta-e2e.md`). El plan Free no incluye `fundamentals` (403), y sin `fundamentals` no se crea ninguna acción (`decisiones-modelo-identidad.md` §3), así que quedan **pendientes de plan de pago** `GOOGL`, `GOOG`, `KO`, `SHEL`, `META`, `JPM` y `O`; `JPM` y `O` esperan además al seed D3. Coste por símbolo: `eod` 1, `div` 1 y `splits` 1 entran en Free (3 llamadas; 8 con `news`); `fundamentals` (10) no. No se gasta cuota Free en símbolos sin plan de pago.
@@ -248,7 +248,7 @@ Huecos detectados al planificar que el diseño no resuelve todavía. Se implemen
 |---|---|---|
 | D1 | ~~Qué listing es el **primario** cuando una security cotiza en varias bolsas.~~ **Sustituida** (P12, 2026-10-13, `decisiones-modelo-identidad.md` §3.b). | Se ingieren **todas** las cotizaciones: una security por ISIN y un listing por símbolo. Primario, recalculado en cada pasada por security: sin bolsa no es primario si hay otro con bolsa; 1) bolsa en el país del prefijo del ISIN; 2) `quote_currency` = divisa de la bolsa o su subunidad (`src/fx/subunits.ts`); 3) `provider_symbol` menor. |
 | D2 | Cómo se mapea el `Type` de EODHD a `ASSET_TYPE` (no hay tabla `SOURCE_*` para ello). | Mapa constante en un módulo (`Common Stock` → `common_stock`, `ETF` → `etf`); tipo desconocido → no se ingiere + finding `ASSET_TYPE_UNMAPPED`. |
-| D3 | Set inicial de `SECTOR` / `INDUSTRY`. | Borrador propio (~11 sectores, sin copiar nombres ni códigos GICS) con Banking, Insurance y REITs como industrias, construido a partir de C15. **Lo aprueba David.** |
+| D3 | ~~Set inicial de `SECTOR` / `INDUSTRY`.~~ **Cerrada** (2026-10-14, `decisiones-modelo-taxonomia.md` §4.b). | Taxonomía cargada: 11 sectores y 38 industrias (`db/seeds/006_taxonomia.sql`). **Pendiente:** el mapa `SOURCE_SECTOR_MAP`, que espera las etiquetas reales del universo (plan de pago). |
 | D4 | `ACCOUNTING_BALANCE` necesita pasivo total y `FUNDAMENTALS` no lo guarda (ya faltaban gasto de impuestos y reservas para ROIC y Altman). | Regla desactivada. Sin cambiar el esquema. |
 | D5 | Tolerancias de validación. | Un fichero de config: cuadre 1 %, SEC 0,5 %, salto 200 %, staleness 200 días (fundamentales) / 5 días hábiles (precios). |
 | D6 | Códigos de regla nuevos (`VENUE_UNMAPPED`, `ASSET_TYPE_UNMAPPED`). | Se añaden al catálogo (es extensible por diseño), categoría `structural`, severidad `warning`. |

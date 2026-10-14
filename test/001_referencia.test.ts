@@ -56,11 +56,11 @@ test('la comprobación de timezone detecta una zona inválida', () => inRollback
 }));
 
 test('sector/industry: code únicos e industria exige sector existente', () => inRollback(async (c) => {
-  const { rows } = await c.query<{ sector_id: string }>("INSERT INTO sector (code, name) VALUES ('fin','Financials') RETURNING sector_id");
+  const { rows } = await c.query<{ sector_id: string }>("INSERT INTO sector (code, name) VALUES ('test_sector','Sector de prueba') RETURNING sector_id");
   const sid = rows[0]!.sector_id;
-  await c.query("INSERT INTO industry (sector_id, code, name) VALUES ($1,'banking','Banking')", [sid]);
-  expect((await dbError(c, "INSERT INTO industry (sector_id, code, name) VALUES ($1,'banking','Otra')", [sid]))?.code).toBe('23505');
+  await c.query("INSERT INTO industry (sector_id, code, name) VALUES ($1,'test_industry','Industria de prueba')", [sid]);
+  expect((await dbError(c, "INSERT INTO industry (sector_id, code, name) VALUES ($1,'test_industry','Otra')", [sid]))?.code).toBe('23505');
   expect((await dbError(c, "INSERT INTO industry (sector_id, code, name) VALUES (999999,'x','X')"))?.code).toBe('23503');
-  expect((await dbError(c, "INSERT INTO sector (code, name) VALUES ('fin','Dup')"))?.code).toBe('23505');
+  expect((await dbError(c, "INSERT INTO sector (code, name) VALUES ('test_sector','Dup')"))?.code).toBe('23505');
   expect((await dbError(c, 'DELETE FROM sector WHERE sector_id=$1', [sid]))?.code).toBe('23503');
 }));
