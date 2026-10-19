@@ -1,6 +1,6 @@
 # P19 — ESEF/UKSEF (filings.xbrl.org) como segunda fuente europea
 
-> **Estado:** abierta. Decisiones de diseño tomadas el 2026-10-19 (sección 11); el detalle de esquema se cierra **con el resultado del spike** (`docs/esef/spike.md`).
+> **Estado:** abierta. Decisiones de diseño tomadas el 2026-10-19 (sección 11). Spike ejecutado el mismo día (`docs/esef/spike-resultado.md`) y aplicado aquí; siguen abiertos Q4–Q7, que dependen de tener fundamentales de EODHD (el plan actual es `free`).
 > Entrada resumida en `docs/propuestas-cambio-modelo.md` (P19).
 
 ## 1. Objetivo
@@ -23,11 +23,14 @@ Es la fuente primaria: una discrepancia contra el informe que publica la propia 
 
 La cobertura será parcial y tiene que verse: una empresa sin informe es **no validable**, no "validada".
 
+**Alemania queda fuera de la fuente.** El spike midió 0 filings de `DE` en `filings.xbrl.org` (ni SAP, ni Siemens, ni Allianz, ni ningún otro alemán). Las empresas alemanas son **no validables** con el motivo «fuente sin cobertura», visible en el panel (sección 9). No es un fallo de identidad ni de captura y no se corrige desde aquí; si la fuente incorpora Alemania, entra sin cambiar el diseño.
+
 ## 3. Fuente
 
 - API pública `https://filings.xbrl.org/api/filings` (JSON:API: `page[size]`, `page[number]`, `filter[country]=ES`, `sort=-processed`, `include=entity`).
 - Por informe: paquete original, visor iXBRL y **xBRL-JSON** (generado con Arelle). Se ingiere el xBRL-JSON.
 - Riesgos: no es oficial ni completa, puede tardar en incorporar informes, puede limitarse o retirarse (suscribirse a la lista `fxo-users`), muchos informes llegan con errores de validación.
+- Medido en el spike (2026-10-19, `spike-resultado.md` Q1–Q2): sin clave ni límite de uso visible a ≤1 petición/s; `page[size]` acepta al menos 5000; el índice completo son 26 043 filings. **El `period_end` del índice no es fiable** (Unilever indexa FY2024 con `2025-02-13`; hay cierres en 2031 y 2032): el cierre real se saca de los hechos. **El índice mezcla informes anuales e intermedios** (Novo Nordisk: 23) y no los distingue. Un mismo informe llega por varios países y en varias versiones (`-0`, `-1`…).
 - Respaldo futuro: OAM nacional (CNMV, FCA NSM…) y ESAP cuando exista.
 
 ## 4. Encaje con lo que ya hay
@@ -57,8 +60,9 @@ filings.xbrl.org ──esef-capture──▶ ingestion_run / raw_payload / paylo
 ## 5. Identidad
 
 1. **Camino principal:** LEI del informe = `COMPANY.lei`. Sin tablas nuevas.
-2. **Hueco a medir en el spike:** `verificacion-eodhd.md` C1 solo comprobó `General.LEI` en EEUU. Si EODHD no da el LEI en Europa o el Reino Unido, el cruce cae a GLEIF (ficheros diarios LEI–ISIN) contra `SECURITY.isin`.
-3. Un LEI del informe sin empresa → `ESEF_NO_MATCH` (no se crea nada). Nunca se escribe `COMPANY.lei` desde ESEF: identidad sigue siendo cosa del normalizador (`decisiones-modelo-identidad.md`).
+2. **Hueco abierto (Q4):** `verificacion-eodhd.md` C1 solo comprobó `General.LEI` en EEUU, y el spike no pudo medirlo en Europa (plan `free`, sin fundamentals). Hasta tenerlo no se sabe si hace falta otro camino.
+3. **GLEIF queda en reserva.** El spike lo probó con 4 LEI: funciona, pero devuelve **todos** los ISIN del emisor, deuda incluida (906 para Novo Nordisk, 1 813 para Shell). Solo se usaría **filtrando contra `SECURITY.isin`** (ISIN ya conocidos), nunca como «todos los ISIN del LEI». Un LEI, varios ISIN es normal (Volvo: clases A y B).
+4. Un LEI del informe sin empresa → `ESEF_NO_MATCH` (no se crea nada). Nunca se escribe `COMPANY.lei` desde ESEF: identidad sigue siendo cosa del normalizador (`decisiones-modelo-identidad.md`).
 
 ## 6. Qué se compara
 
