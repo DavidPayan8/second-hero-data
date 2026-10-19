@@ -70,16 +70,20 @@ Solo columnas que **ya guarda** `FUNDAMENTALS` (no se compara lo que no almacena
 
 | Columna de `FUNDAMENTALS` | Concepto IFRS | Nota |
 |---|---|---|
-| `revenue` | `Revenue` | Bancos y aseguradoras no usan `Revenue`: se medirá en el spike |
-| `gross_profit` | `GrossProfit` | Muchas empresas no lo presentan |
-| `operating_income` | `ProfitLossFromOperatingActivities` | No es obligatorio en IFRS; cobertura irregular |
-| `net_income` | `ProfitLossAttributableToOwnersOfParent` | Mismo criterio que la SEC (atribuible a la matriz); `ProfitLoss` solo para clasificar `consolidated` |
-| `total_assets` | `Assets` | |
-| `total_liabilities` | `Liabilities` | |
-| `total_equity` | `EquityAttributableToOwnersOfParent` (y `Equity`) | Qué recoge `totalStockholderEquity` de EODHD se decide con datos |
-| `cash` | `CashAndCashEquivalents` | |
-| `operating_cf` | `CashFlowsFromUsedInOperatingActivities` | |
-| `capex` | `PurchaseOfPropertyPlantAndEquipmentClassifiedAsInvestingActivities` | `capex` se guarda positivo (P14): normalizar signo |
+| `revenue` | `Revenue`; alternativa estándar `RevenueFromContractsWithCustomers` | Spike: 22/28 informes de no financieras con `Revenue`; el resto usa la alternativa o una extensión (`ESEF_UNMAPPED`). **No se compara en el sector financiero** (ver abajo) |
+| `gross_profit` | `GrossProfit` | Spike: 18/28; muchas empresas no lo presentan. Sin concepto → no comparable. **No se compara en el sector financiero** |
+| `operating_income` | `ProfitLossFromOperatingActivities` | No es obligatorio en IFRS; spike: 21/28. Sin concepto → no comparable. **No se compara en el sector financiero** |
+| `net_income` | `ProfitLossAttributableToOwnersOfParent` | Mismo criterio que la SEC (atribuible a la matriz). Si el informe **solo** trae `ProfitLoss` (ASML y Novo Nordisk en el spike), se compara con él y el mismatch se clasifica aparte como `consolidated`, como en la SEC |
+| `total_assets` | `Assets` | Spike: 28/28 |
+| `total_liabilities` | `Liabilities` | Spike: solo 16/28; casi la mitad no lo etiqueta. Sin concepto → no comparable; **no se deriva** de `Assets − Equity` |
+| `total_equity` | `EquityAttributableToOwnersOfParent` (y `Equity`) | Spike: 28/28. Qué recoge `totalStockholderEquity` de EODHD se decide con datos (Q5, abierta) |
+| `cash` | `CashAndCashEquivalents` | Spike: 28/28 |
+| `operating_cf` | `CashFlowsFromUsedInOperatingActivities` | Spike: 28/28 |
+| `capex` | `PurchaseOfPropertyPlantAndEquipmentClassifiedAsInvestingActivities`; alternativas `PurchaseOfPropertyPlantAndEquipment…` y `PurchaseOfIntangibleAssetsClassifiedAsInvestingActivities` | Spike: solo 14/28 con el estándar; el resto usa alternativas o extensiones, que se resuelven con `esef_concept_map`. `capex` se guarda positivo (P14): normalizar signo |
+
+**Sector financiero.** Para las empresas cuyo `COMPANY.sector_id` es `financials` (taxonomía D3, `decisiones-modelo-taxonomia.md` §4.b; abarca `banking`, `insurance`, `capital_markets` y `specialty_finance`, y se lee del sector aunque `industry_id` sea NULL) **no se comparan `revenue`, `gross_profit` ni `operating_income`**: los bancos no usan `Revenue` y los otros dos no tienen un significado comparable. Se siguen comparando `net_income`, `total_assets`, `total_liabilities`, `total_equity`, `cash`, `operating_cf` y `capex`. Si `sector_id` es NULL no se sabe que es financiera y se aplica la regla de ausencia (7.3). Aseguradoras: **no medido** (sin muestra, Allianz no existe en la fuente).
+
+**Ausencia no es discrepancia.** Un concepto que no aparece en el informe deja la columna en «no comparable»; nunca genera un finding de diferencia.
 
 Fuera de la fase 1: `ebitda` (no es concepto IFRS), `total_debt`, `short_term_debt` y `long_term_debt` (sin concepto único en IFRS).
 
@@ -89,24 +93,28 @@ Extensiones: un concepto propio de la empresa no se adivina. Se emite `ESEF_UNMA
 
 ### 7.1 Emparejamiento
 - Fila anual más reciente de cada `(company, period_end)` en `FUNDAMENTALS`, como en la SEC.
-- Periodo: fin de ejercicio del informe frente a `period_end`, con la misma ventana que la SEC (`secPeriodWindowDays`) salvo que el spike diga otra cosa. Ejercicios partidos (p. ej. enero o septiembre) se cruzan por fecha de cierre.
-- Duplicados: el mismo informe en varios países o idiomas se deduplica por hash.
+- Periodo: fin de ejercicio **calculado a partir de los hechos del informe** frente a `period_end`, con la misma ventana que la SEC (`secPeriodWindowDays`); el `period_end` del índice no se usa para emparejar (no es fiable). Si la ventana de 7 días basta no se pudo contrastar (Q5, abierta). Ejercicios partidos (p. ej. enero o septiembre) se cruzan por fecha de cierre.
+- Solo informes **anuales**: el periodo principal tiene una duración de ~1 año (≥ 340 días). Los intermedios (el índice no los distingue) se descartan por duración, no por fecha.
+- Duplicados: se agrupan por `(LEI, cierre real)`, **no por hash** (el spike encontró 1 732 grupos y solo 80 comparten `sha256`: el mismo informe llega por varios países y en varias versiones). Dentro del grupo se elige la versión con menos `error_count` y, a igualdad, la de `processed` más reciente.
 - Reexpresiones: cada informe se compara con **su** periodo principal; las comparativas reexpresadas del año anterior son información, no error (como `restated` en la SEC).
 
 ### 7.2 Unidades
 - **Moneda:** se compara en la moneda del informe. Si `FUNDAMENTALS.currency` es otra, finding de moneda y no se convierte.
-- **Subunidades (Reino Unido):** si EODHD diera GBX donde el informe da GBP, se usa `src/fx/subunits.ts`; no se inventa un factor. A verificar en el spike (P2 quedó abierta precisamente por esto).
-- **Escala:** xBRL-JSON da el valor completo más `decimals`; el valor de EODHD se redondea a esa precisión antes de comparar.
+- **Subunidades (Reino Unido):** si EODHD diera GBX donde el informe da GBP, se usa `src/fx/subunits.ts`; no se inventa un factor. Q6 sigue **abierta**: el spike midió que los informes vienen en USD (Shell, BP, AstraZeneca, HSBC), EUR (Unilever, Santander) o moneda local, nunca en GBX, pero no pudo ver la moneda de `FUNDAMENTALS` (plan `free`). Evidencia indirecta: EODHD da el precio de `SHEL.LSE` en peniques (GBX) y rotula su dividendo como GBP, mientras el informe es USD.
+- **Escala:** xBRL-JSON da el valor completo (texto exacto, sin exponente) más `decimals`; el valor de EODHD se redondea a esa precisión antes de comparar.
+- **Fechas:** en el xBRL-JSON el fin de un periodo y los instantes vienen como las 00:00 **del día siguiente** al cierre; el extractor resta un día.
 - **Signo:** se normaliza `capex` (positivo = salida de caja).
 
 ### 7.3 Tolerancia y findings
-- Bandas decididas a priori (se revisan con los datos del spike), en `VALIDATION_CONFIG`:
+- Bandas decididas a priori, en `VALIDATION_CONFIG`. Su revisión con datos reales (Q5) sigue **abierta**: el spike no tuvo fundamentales de EODHD, así que se mantienen tal cual:
   - |Δ| ≤ 0,1 % → cuadra
   - 0,1 % < |Δ| ≤ 2 % → discrepancia leve
   - |Δ| > 2 % → discrepancia grave
 - Ojo: la SEC usa hoy una sola tolerancia (`secTolerance` = 0,5 %). Hay que decidir si se unifican.
 - **Código de regla propio** (`ESEF_MISMATCH`), no `SECOND_SOURCE_MISMATCH`: el índice único parcial `(rule_code, target_table, target_key) WHERE status = 'open'` haría chocar un finding de la SEC y otro de ESEF sobre la misma fila (empresas europeas que también presentan en la SEC). La banda va en `detail`; la severidad sale del catálogo como en el resto de reglas.
-- Si todas las magnitudes comparables cuadran: `reported_at_source` pasa a `cross_checked`, como con la SEC.
+- **Una magnitud sin dato en el informe** (concepto ausente, hecho nulo, columna excluida por sector) **se ignora**, igual que `secSecondSource.ts` con una magnitud sin dato en la SEC: no es un finding y no cuenta como que cuadra. Si ninguna magnitud se puede comparar, la fila queda como está.
+- **`net_income` solo con `ProfitLoss`:** se compara, y si no cuadra el mismatch se clasifica aparte como `consolidated` (como la SEC); la clasificación va en `detail`, y la regla de `rowKind` de la SEC (el tipo de la fila es el de todos sus mismatches si coinciden) se reutiliza.
+- Si todas las magnitudes comparables cuadran (y hay al menos una): `reported_at_source` pasa a `cross_checked`, como con la SEC.
 - Códigos nuevos: `ESEF_MISMATCH` (data_quality), `ESEF_UNMAPPED` y `ESEF_NO_MATCH` (structural), todos `warning`.
 
 ## 8. Cambio de modelo — decidido: opción C, con condiciones
