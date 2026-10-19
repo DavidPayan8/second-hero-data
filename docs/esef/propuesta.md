@@ -131,9 +131,9 @@ Extensiones: un concepto propio de la empresa no se adivina. Se emite `ESEF_UNMA
 2. Cada fila lleva `extractor_version`; si cambia el extractor se regenera, no se parchea.
 3. Nadie la edita a mano. Las decisiones de los admins van en sus propias tablas.
 
-### 8.2 Tablas nuevas (provisionales; se cierran con el spike)
-- `esef_filing`: `esef_filing_id`, `fxo_id`, `content_hash` (→ `payload_blob`), `lei`, `country`, `period_end`, `processed_at`, `report_url`, `viewer_url`, `validation_error_count`.
-- `esef_fact`: `esef_filing_id`, `concept` (QName, p. ej. `ifrs-full:Revenue`), `is_extension`, `period_start`, `period_end` / `instant`, `value` (`numeric`, texto exacto), `decimals`, `unit`, `extractor_version`. Solo hechos sin dimensiones; volumen a medir en el spike.
+### 8.2 Tablas nuevas (columnas ajustadas con el spike; el DDL definitivo se escribe en la fase 1)
+- `esef_filing`: `esef_filing_id`, `fxo_id` (único; lleva la versión `-n` de la presentación), `content_hash` (→ `payload_blob`), `index_sha256` (el `sha256` del índice, distinto del anterior), `lei`, `country`, `period_start` y `period_end` **reales, extraídos de los hechos**, `index_period_end` (el del índice, solo informativo), `processed_at`, `date_added`, `report_url`, `viewer_url`, `json_url`, `error_count`, `warning_count`, `inconsistency_count`, `ifrs_taxonomy` (versión, de `documentInfo`). Sin columna anual/intermedio ni «versión elegida»: se derivan de `period_start`/`period_end` y de `error_count`/`processed_at`. Moneda del informe: se decide al escribir el extractor (pueden convivir varias en un informe; Q6 abierta).
+- `esef_fact`: `esef_filing_id`, `concept` (QName, p. ej. `ifrs-full:Revenue`), `is_extension`, `period_start`, `period_end` (cierre real: ya restado el día de más del xBRL-JSON; para un instante, `period_start` NULL), `value` (`numeric`, texto exacto), `decimals` (NULL si el hecho no lo trae), `unit`, `extractor_version`. **Guarda TODOS los hechos numéricos sin dimensiones** (decisión de David, 2026-10-19), no solo los de la tabla 6: los admins tienen que poder mapear extensiones desde el panel y una extensión fuera de la tabla no se podría mapear. Volumen medido en el spike: ≈ 5,1 M filas (13 638 informes anuales e intermedios `(LEI, cierre)` entre 2021-01 y 2026-06, ~350–380 hechos numéricos sin dimensiones por informe); la muestra son grandes cotizadas, así que es una cota alta. Se descartan los hechos con valor `null` (nil) y los que llevan dimensiones. Sigue siendo una proyección regenerable desde el crudo (8.1).
 - `esef_concept_map`: `concept`, `lei` (NULL = global), `fundamentals_column`, `created_by`, `created_at`. Auditada como dimensión (T4).
 - **Resolución de findings:** `data_quality_finding` ya tiene `status` (`reviewed`/`accepted`/`dismissed`), `resolved_by` y `resolved_at`. Falta el *porqué* (`eodhd_ok`, `esef_ok`, `ambos_mal`, `diferencia_esperada`). Opciones: (a) tabla `finding_resolution (finding_id, decision, note)`; (b) columna `resolution jsonb` en el finding. Se decide junto con el panel.
 
@@ -141,7 +141,7 @@ Extensiones: un concepto propio de la empresa no se adivina. Se emite `ESEF_UNMA
 
 ## 9. Panel de admin (lo que necesita de esta fuente)
 
-1. Cobertura por empresa: validada / con discrepancias / no validable (motivo: MTF, sin consolidado, sin informe, sin LEI).
+1. Cobertura por empresa: validada / con discrepancias / no validable (motivo: MTF, sin consolidado, sin informe, sin LEI, **fuente sin cobertura** —Alemania, hoy—). Además, por columna: comparada / no comparable (concepto ausente, o excluida por sector financiero).
 2. Cola de findings por severidad, país y concepto, con los dos valores lado a lado y enlace al visor iXBRL.
 3. Resolver `ESEF_NO_MATCH` (identidad) y `ESEF_UNMAPPED` (conceptos); guardar un mapeo recompara lo afectado.
 4. Estado de captura: últimos informes, errores de descarga y de validación.
@@ -150,7 +150,7 @@ El panel lo construye el otro equipo; aquí solo se fija qué datos expone la ca
 
 ## 10. Fases
 
-0. **Spike de solo lectura** (`docs/esef/spike.md`). Antes de seguir con EODHD.
+0. **Spike de solo lectura** (`docs/esef/spike.md`). Hecho el 2026-10-19 (`spike-resultado.md`); Q4–Q7 pendientes de fundamentales de EODHD.
 1. Captura (`esef-capture`) sobre las tablas existentes + migración de `esef_filing` y `esef_fact` + extractor.
 2. Regla `esefSecondSource` y códigos nuevos en el catálogo.
 3. Lo que necesite el panel (8.2, resolución).
@@ -161,11 +161,18 @@ El panel lo construye el otro equipo; aquí solo se fija qué datos expone la ca
 | # | Asunto | Estado |
 |---|---|---|
 | 1 | Persistencia | **Decidido:** opción C con las condiciones de 8.1 |
-| 2 | Tolerancias | **Decidido a priori:** bandas de 7.3; se revisan con el spike. Abierto: ¿unificar con `secTolerance`? |
-| 3 | Empresas no validables | **Decidido:** visibles en el panel con su motivo |
+| 2 | Tolerancias | **Decidido a priori:** bandas de 7.3. Revisión con datos reales **abierta** (Q5, sin fundamentales de EODHD). Abierto: ¿unificar con `secTolerance`? |
+| 3 | Empresas no validables | **Decidido:** visibles en el panel con su motivo; nuevo motivo «fuente sin cobertura» (Alemania) |
 | 4 | Reino Unido (UKSEF) | **Decidido:** entra (Main Market) |
 | 5 | FY2020 | **Decidido:** fuera; se empieza en FY2021 |
-| 6 | Orden | **Decidido:** spike antes de seguir con EODHD |
+| 6 | Orden | **Decidido y cumplido:** spike antes de seguir con EODHD (ejecutado el 2026-10-19) |
 | 7 | ¿Una resolución puede corregir la fuente de verdad? | **Abierto:** en esta fase no |
 | 8 | Forma de guardar la resolución (8.2 a/b) | **Abierto** |
-| 9 | ¿Hace falta GLEIF? | **Abierto:** depende de si EODHD da el LEI fuera de EEUU (spike) |
+| 9 | ¿Hace falta GLEIF? | **Abierto, en reserva:** depende de Q4 (`General.LEI` de EODHD en Europa). Si se usa, solo filtrando contra `SECURITY.isin` |
+| 10 | Alemania | **Decidido:** no validable, motivo «fuente sin cobertura» (0 filings `DE` en la fuente); se añade al panel |
+| 11 | Qué guarda `esef_fact` | **Decidido:** todos los hechos numéricos sin dimensiones (≈ 5 M filas), para poder mapear extensiones desde el panel; proyección regenerable |
+| 12 | Sector financiero | **Decidido:** `sector_id = financials` (D3) no compara `revenue`, `gross_profit` ni `operating_income` |
+| 13 | Ausencia de concepto | **Decidido:** «no comparable», nunca un finding de diferencia (criterio de `secSecondSource.ts`) |
+| 14 | `net_income` solo con `ProfitLoss` | **Decidido:** se compara y se clasifica aparte como `consolidated` |
+| 15 | Deduplicación y periodo | **Decidido:** por `(LEI, cierre real)` y versión con menos errores; cierre sacado de los hechos, no del índice; solo informes de ~1 año |
+| 16 | Q4 (`General.LEI` en Europa), Q5 (comparación real), Q6 (moneda de `FUNDAMENTALS` en UK), Q7 (CIK de ASML) | **Abiertos:** requieren fundamentales de EODHD (plan actual `free`) |
