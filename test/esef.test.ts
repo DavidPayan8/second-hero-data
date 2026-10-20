@@ -26,6 +26,7 @@ let base = '';
 let index: IdxFiling[] = [];
 let files = new Map<string, Buffer>(); // json_url -> cuerpo
 let status = new Map<string, number>(); // ruta -> estado forzado
+let dropOnce = new Set<string>(); // rutas cuya primera petición se corta (fallo de transporte)
 const seen: { path: string; ua: string | null; at: number }[] = [];
 
 const jsonUrl = (f: IdxFiling) => (f.json_url === undefined ? `/${f.lei}/${f.period_end}/${f.fxo_id}.json` : f.json_url);
@@ -59,6 +60,7 @@ beforeAll(async () => {
   server = http.createServer((req, res) => {
     seen.push({ path: req.url!, ua: req.headers['user-agent'] ?? null, at: Date.now() });
     const url = new URL(req.url!, 'http://x');
+    if (dropOnce.delete(url.pathname)) { req.socket.destroy(); return; }
     const forced = status.get(url.pathname);
     if (forced) { res.writeHead(forced); res.end('{"error":"forzado"}'); return; }
     if (url.pathname === '/api/filings') {
@@ -77,7 +79,7 @@ beforeAll(async () => {
 async function cleanAll() {
   for (const sql of ['DELETE FROM esef_fact', 'DELETE FROM esef_filing', 'DELETE FROM raw_payload', 'DELETE FROM payload_blob', 'DELETE FROM ingestion_run']) await pool.query(sql);
 }
-beforeEach(async () => { seen.length = 0; index = []; files = new Map(); status = new Map(); await cleanAll(); });
+beforeEach(async () => { seen.length = 0; index = []; files = new Map(); status = new Map(); dropOnce = new Set(); await cleanAll(); });
 afterAll(async () => { await cleanAll(); server.closeAllConnections(); await new Promise((r) => server.close(r)); vi.unstubAllGlobals(); await closePool(); });
 
 // ---- cuerpos xBRL-JSON sintéticos (forma medida en el spike)
@@ -255,6 +257,16 @@ describe('captura del índice y por lotes', () => {
     const third = await captureBatch({ today: '2026-10-20' }, { userAgent: UA, baseUrl: base, minIntervalMs: 0, sleep: async () => {} });
     expect(third.plan.jobs).toBe(0);
     expect(third.status).toBe('ok');
+  });
+
+  test('un fallo de transporte se reintenta sin quedarse sin presupuesto: el último trabajo también se completa', async () => {
+    for (const y of ['2022', '2023']) serve(idx('0', LEI_A, 'ES', `${y}-12-31`));
+    await photoWith();
+    dropOnce.add(`/${LEI_A}/2023-12-31/${LEI_A}-2023-12-31-ESEF-ES-0.json`); // el último de la lista falla una vez
+    const s = await captureBatch({ today: '2026-10-20' }, { userAgent: UA, baseUrl: base, minIntervalMs: 0, sleep: async () => {} });
+    expect(s).toMatchObject({ attempts: 3, ok: 2, errors: 1, jobsDone: 2 });
+    expect(s.stoppedBy).toBeUndefined();
+    expect((await pool.query("SELECT count(*)::int AS n FROM raw_payload WHERE ingestion_run_id = $1 AND transport_error IS NOT NULL", [s.runId])).rows[0].n).toBe(1);
   });
 
   test('una señal de corte para antes de la siguiente llamada y deja la corrida cerrada', async () => {

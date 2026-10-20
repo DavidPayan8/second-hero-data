@@ -23,13 +23,16 @@ interface CaptureCommon {
   signal?: AbortSignal;
 }
 
+// Intentos por trabajo (cada intento gasta un punto del presupuesto de la corrida; sin cuota real, el tope es jobs × intentos).
+const MAX_ATTEMPTS = 2;
+
 const common = (o: CaptureCommon, userAgent: string, jobsLen: number) => ({
   provider: ESEF_CONFIG.provider,
   fetcher: esefFetcher({ userAgent, ...(o.baseUrl ? { baseUrl: o.baseUrl } : {}) }),
   encodeBody: (body: Buffer) => ({ body: compressBody(body), format: ESEF_BODY_FORMAT }),
   minIntervalMs: o.minIntervalMs ?? ESEF_CONFIG.minIntervalMs,
-  budget: jobsLen,
-  maxAttempts: 2,
+  budget: jobsLen * MAX_ATTEMPTS,
+  maxAttempts: MAX_ATTEMPTS,
   ...(o.log ? { log: o.log } : {}),
   ...(o.sleep ? { sleep: o.sleep } : {}),
   ...(o.now ? { now: o.now } : {}),
