@@ -57,6 +57,16 @@ filings.xbrl.org ──esef-capture──▶ ingestion_run / raw_payload / paylo
                          data_quality_finding  (+ cross_checked en FUNDAMENTALS)
 ```
 
+### 4.1 Captura y extractor (fase 1, implementada en la rama `esef-segunda-fuente`)
+
+- `npm run esef-capture -- --index [--go]`: baja el índice completo una vez y lo guarda como `raw_payload` (endpoint `filings-index`, una por página de 1 000, scope `index`). Es la **foto de referencia**: los lotes leen de la última corrida de índice terminada (`ok`).
+- `npm run esef-capture -- --batch [--country=ES,GB] [--year=2023] [--leis=...] [--limit=N] [--go]`: baja informes de esa foto (endpoint `filing-json`, `provider_symbol` = LEI; `params` guarda el `fxo_id`, el `json_url` y los atributos del índice). Una `ingestion_run` por lote. Quedan fuera Ucrania, los cierres anteriores a 2021-01-01 y los futuros (el índice trae cierres de 2031). `--year` filtra por el cierre **del índice** (prefiltro; el cierre real sale de los hechos).
+- **Reanudable:** se salta cualquier informe cuyo `json_url` ya tenga una `raw_payload` con http 200. Un corte (429, error de red o Ctrl+C) deja la corrida en `partial`.
+- Dry-run por defecto; `--go` para llamar. Máximo 1 petición por segundo y `User-Agent` = `SEC_USER_AGENT`.
+- **La presentación elegida** para cada `(LEI, cierre real)` se calcula siempre sobre todas las capturadas (`src/esef/choose.ts`), nunca dentro del lote, y no se guarda: menos `error_count`, luego `processed` más reciente, luego `fxo_id` mayor. Las versiones `-0`, `-1`… suelen ser **idiomas** del mismo informe (Volvo 2021: inglés y sueco, mismos números), no correcciones.
+- `npm run esef-extract [-- --run=ID] [--all]`: del crudo a `esef_filing` y `esef_fact`, sin red. Marca `raw_payload.parse_status`; `replay` ignora las corridas de ESEF.
+- Fuera de la fase 1: el comparador (`ESEF_MISMATCH`, depende de fundamentales europeos de EODHD), `esef_concept_map` y la resolución de findings.
+
 ## 5. Identidad
 
 1. **Camino principal:** LEI del informe = `COMPANY.lei`. Sin tablas nuevas.
@@ -147,7 +157,7 @@ Extrapolado a los 13 638 informes del índice: ≈ 166 GB en bruto frente a ≈ 
 - El **nivel 19 es provisional** y vive en un único sitio (`ESEF_ZSTD_LEVEL` en `src/esef/codec.ts`), anotado en `docs/registro.md`. Cambiarlo no exige migrar lo ya guardado: zstd descomprime cualquier nivel.
 - Requiere Node ≥ 22.15 (`zlib.zstdCompress`): `.nvmrc` y `engines` de `package.json`.
 ### 8.2 Tablas nuevas (columnas ajustadas con el spike; el DDL definitivo se escribe en la fase 1)
-- `esef_filing`: `esef_filing_id`, `fxo_id` (único; lleva la versión `-n` de la presentación), `content_hash` (→ `payload_blob`), `index_sha256` (el `sha256` del índice, distinto del anterior), `lei`, `country`, `period_start` y `period_end` **reales, extraídos de los hechos**, `index_period_end` (el del índice, solo informativo), `processed_at`, `date_added`, `report_url`, `viewer_url`, `json_url`, `error_count`, `warning_count`, `inconsistency_count`, `ifrs_taxonomy` (versión, de `documentInfo`). Sin columna anual/intermedio ni «versión elegida»: se derivan de `period_start`/`period_end` y de `error_count`/`processed_at`. Moneda del informe: se decide al escribir el extractor (pueden convivir varias en un informe; Q6 abierta).
+- `esef_filing`: `esef_filing_id`, `fxo_id` (único; lleva la versión `-n` de la presentación), `content_hash` (→ `payload_blob`), `index_sha256` (el `sha256` del índice, distinto del anterior), `lei`, `country`, `period_start` y `period_end` **reales, extraídos de los hechos**, `index_period_end` (el del índice, solo informativo), `processed_at`, `date_added`, `report_url`, `viewer_url`, `json_url`, `error_count`, `warning_count`, `inconsistency_count`, `ifrs_taxonomy` (versión, de `documentInfo`). `extractor_version` (versión del extractor que rellenó la presentación y sus hechos). Sin columna anual/intermedio ni «versión elegida»: se derivan de `period_start`/`period_end` y de `error_count`/`processed_at`. Moneda del informe: se decide al escribir el extractor (pueden convivir varias en un informe; Q6 abierta).
 - `esef_fact`: `esef_filing_id`, `concept` (QName, p. ej. `ifrs-full:Revenue`), `is_extension`, `period_start`, `period_end` (cierre real: ya restado el día de más del xBRL-JSON; para un instante, `period_start` NULL), `value` (`numeric`, texto exacto), `decimals` (NULL si el hecho no lo trae), `unit`, `extractor_version`. **Guarda TODOS los hechos numéricos sin dimensiones** (decisión de David, 2026-10-19), no solo los de la tabla 6: los admins tienen que poder mapear extensiones desde el panel y una extensión fuera de la tabla no se podría mapear. Volumen medido en el spike: ≈ 5,1 M filas (13 638 informes anuales e intermedios `(LEI, cierre)` entre 2021-01 y 2026-06, ~350–380 hechos numéricos sin dimensiones por informe); la muestra son grandes cotizadas, así que es una cota alta. Se descartan los hechos con valor `null` (nil) y los que llevan dimensiones. Sigue siendo una proyección regenerable desde el crudo (8.1).
 - `esef_concept_map`: `concept`, `lei` (NULL = global), `fundamentals_column`, `created_by`, `created_at`. Auditada como dimensión (T4).
 - **Resolución de findings:** `data_quality_finding` ya tiene `status` (`reviewed`/`accepted`/`dismissed`), `resolved_by` y `resolved_at`. Falta el *porqué* (`eodhd_ok`, `esef_ok`, `ambos_mal`, `diferencia_esperada`). Opciones: (a) tabla `finding_resolution (finding_id, decision, note)`; (b) columna `resolution jsonb` en el finding. Se decide junto con el panel.
@@ -166,7 +176,7 @@ El panel lo construye el otro equipo; aquí solo se fija qué datos expone la ca
 ## 10. Fases
 
 0. **Spike de solo lectura** (`docs/esef/spike.md`). Hecho el 2026-10-19 (`spike-resultado.md`); Q4–Q7 pendientes de fundamentales de EODHD.
-1. Captura (`esef-capture`) sobre las tablas existentes + migración de `esef_filing` y `esef_fact` + extractor.
+1. Captura (`esef-capture`) sobre las tablas existentes + migración 018 de `esef_filing` y `esef_fact` + extractor. **Hecha** (2026-10-20, ver 4.1 y `docs/registro.md`), sin comparador.
 2. Regla `esefSecondSource` y códigos nuevos en el catálogo.
 3. Lo que necesite el panel (8.2, resolución).
 4. Más adelante: OAM nacional, ESAP, overrides.
