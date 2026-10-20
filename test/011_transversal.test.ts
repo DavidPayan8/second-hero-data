@@ -10,7 +10,7 @@ afterAll(closePool);
 
 const id = async (c: pg.PoolClient, sql: string, params: unknown[] = []) => (await c.query<{ id: string }>(sql, params)).rows[0]!.id;
 
-test('A1: existen exactamente las 36 tablas del modelo (sin contar schema_migrations)', async () => {
+test('A1: existen exactamente las 36 tablas del modelo y las 2 de P19 (sin contar schema_migrations)', async () => {
   const modelo = [
     // núcleo
     'asset_type', 'exchange', 'sector', 'industry', 'company', 'security', 'listing', 'listing_ticker_change',
@@ -27,8 +27,10 @@ test('A1: existen exactamente las 36 tablas del modelo (sin contar schema_migrat
     'dimension_audit', 'validation_rule', 'data_quality_finding',
   ].sort();
   expect(modelo).toHaveLength(36);
+  // P19 (018_esef): proyección regenerable de la segunda fuente europea; no son del mapa de las 36 tablas.
+  const p19 = ['esef_filing', 'esef_fact'];
   const { rows } = await pool.query<{ table_name: string }>("SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE' AND table_name <> 'schema_migrations' ORDER BY 1");
-  expect(rows.map((r) => r.table_name)).toEqual(modelo);
+  expect(rows.map((r) => r.table_name)).toEqual([...modelo, ...p19].sort());
 });
 
 const AUD = "INSERT INTO dimension_audit (change_set_id, table_name, row_key, column_name, old_value, new_value, op) VALUES (gen_random_uuid(),'company','{\"company_id\": 1}','legal_name',$1,$2,$3)";
