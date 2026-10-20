@@ -64,7 +64,7 @@ Nulos: `report_url`/`viewer_url` 246, `json_url` 275, `package_url` 9 873 (todos
 
 ## 3. Q2 — Forma del xBRL-JSON
 
-32 informes de la muestra (16 empresas × primero y último ejercicio desde 2021), ~590 MB descomprimidos (`fixtures/esef/json/`, `fixtures/esef/q23.json`).
+32 informes de la muestra (16 empresas × primero y último ejercicio desde 2021: 15 con cierre en 2021 y 17 posteriores), 260,9 MB descomprimidos (medido en `docs/esef/medicion-compresion.md`; la cifra de ~590 MB que figuraba aquí era errónea) (`fixtures/esef/json/`, `fixtures/esef/q23.json`).
 
 - **Estructura:** `documentInfo` (tipo `https://xbrl.org/2021/xbrl-json`, `namespaces`, `taxonomy`, `features.xbrl:canonicalValues`) y `facts`: objeto `{ "f-1": { value, decimals, dimensions } }`. `dimensions` contiene `concept` (QName con prefijo `ifrs-full:` o el de la empresa), `entity` (`scheme:<LEI>`), `period` y, solo en numéricos, `unit`. Cualquier otra clave es una dimensión de taxonomía (`ifrs-full:ComponentsOfEquityAxis` 8 719 veces, `SegmentConsolidationItemsAxis` 1 005, `RetrospectiveApplicationAndRetrospectiveRestatementAxis` 442, `ConsolidatedAndSeparateFinancialStatementsAxis` 384…).
 - **Periodo:** `inicio/fin` ISO con hora; el fin y los instantes vienen como **las 00:00 del día siguiente al cierre** (`2024-02-01T00:00:00/2025-02-01T00:00:00` = ejercicio cerrado el 2025-01-31). El extractor debe restar un día.
@@ -75,8 +75,8 @@ Nulos: `report_url`/`viewer_url` 246, `json_url` 275, `package_url` 9 873 (todos
 
 | | Total | Sin dimensiones | Numéricos sin dim. | MB |
 |---|---|---|---|---|
-| Primer ejercicio (FY2021) | 721 de media | 366 | 353 | 0,1–1,2 |
-| Posteriores | 843 | 511 | 377 | 3,8–42 |
+| Primer ejercicio (15 informes, cierre en 2021) | 721 de media | 366 | 353 | 0,1–1,2 |
+| Posteriores (17 informes) | 843 | 511 | 377 | 3,8–42 |
 | Máximo | 1 952 (Santander) | 857 | 677 | 42,1 (Iberdrola) |
 
   Los FY2021 son pequeños porque solo etiquetan los estados primarios (sin notas detalladas). Sesgo: la muestra son grandes cotizadas; una pequeña tendrá menos hechos.
