@@ -48,6 +48,7 @@ interface Row { id: string; run_id: string; endpoint: string; provider_symbol: s
 // símbolo), también si ya estaba marcado: los escritores son idempotentes, así que repetirlo no cambia recuentos ni deja
 // filas nuevas en dimension_audit.
 // Las filas sin respuesta (transport_error) tienen parse_status NULL y no hay nada que releer.
+// Las corridas de ESEF quedan fuera: sus cuerpos van comprimidos y los relee el extractor propio (`npm run esef-extract`).
 export async function replay(options: { runId?: string; all?: boolean; maxSweeps?: number } = {}): Promise<ReplaySummary> {
   const rows = await pool.query<Row>(
     `SELECT raw_payload_id AS id, ingestion_run_id AS run_id, endpoint, provider_symbol, params, http_status, content_hash, (fetched_at AT TIME ZONE 'UTC')::date::text AS fetched_date FROM raw_payload
@@ -57,6 +58,7 @@ export async function replay(options: { runId?: string; all?: boolean; maxSweeps
        ? `parse_status IS NOT NULL AND raw_payload_id = (SELECT max(r2.raw_payload_id) FROM raw_payload r2
             WHERE r2.endpoint = raw_payload.endpoint AND r2.params = raw_payload.params AND r2.provider_symbol IS NOT DISTINCT FROM raw_payload.provider_symbol AND r2.parse_status IS NOT NULL)`
        : "parse_status = 'pending'"} AND ($1::bigint IS NULL OR ingestion_run_id = $1::bigint)
+       AND ingestion_run_id NOT IN (SELECT ingestion_run_id FROM ingestion_run WHERE provider = 'esef')
      ORDER BY raw_payload_id`,
     [options.runId ?? null],
   );

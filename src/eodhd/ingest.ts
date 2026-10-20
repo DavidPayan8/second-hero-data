@@ -20,6 +20,11 @@ export interface CaptureOptions extends Partial<ClientOptions> {
   provider?: string;
   fetcher?: (job: Job) => Promise<FetchResult>;
   minIntervalMs?: number;
+  // Cómo se guarda el cuerpo en payload_blob. Por defecto, los bytes tal cual con body_format 'json' (EODHD, SEC). ESEF los guarda
+  // comprimidos: el hash (content_hash) y size_bytes siguen siendo los del cuerpo recibido, sin comprimir.
+  encodeBody?: (body: Buffer) => { body: Buffer; format: string };
+  // Para cortar una corrida a medias (Ctrl+C): se comprueba antes de cada llamada y deja la corrida en 'partial'/'failed' según lo hecho.
+  signal?: AbortSignal;
 }
 
 export interface CaptureSummary {
@@ -34,7 +39,7 @@ export interface CaptureSummary {
   jobsDone: number;
   jobsSkipped: number;
   closedStale: number;
-  stoppedBy?: 'budget' | 'rate_limit';
+  stoppedBy?: 'budget' | 'rate_limit' | 'abort';
 }
 
 const sha256 = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
@@ -42,7 +47,7 @@ const isOk = (r: FetchResult) => r.kind === 'response' && r.status >= 200 && r.s
 
 // Escribe un intento: blob (dedup por hash), fila de raw_payload y contadores de la corrida, todo en una transacción
 // para que una corrida que muera deje contadores coherentes con sus filas.
-async function recordAttempt(runId: string, job: Job, result: FetchResult): Promise<void> {
+async function recordAttempt(runId: string, job: Job, result: FetchResult, encode?: CaptureOptions['encodeBody']): Promise<void> {
   if ('api_token' in job.params) throw new Error('api_token no puede ir en params');
   const client = await pool.connect();
   try {
@@ -50,9 +55,10 @@ async function recordAttempt(runId: string, job: Job, result: FetchResult): Prom
     if (result.kind === 'response') {
       // El hash es el de los bytes exactos recibidos y el cuerpo se guarda tal cual, sin re-serializar ni transformar.
       const hash = sha256(result.body);
+      const stored = encode ? encode(result.body) : { body: result.body, format: 'json' };
       await client.query(
-        'INSERT INTO payload_blob (content_hash, body, size_bytes) VALUES ($1, $2, $3) ON CONFLICT (content_hash) DO NOTHING',
-        [hash, result.body, result.body.length],
+        'INSERT INTO payload_blob (content_hash, body, body_format, size_bytes) VALUES ($1, $2, $3, $4) ON CONFLICT (content_hash) DO NOTHING',
+        [hash, stored.body, stored.format, result.body.length],
       );
       await client.query(
         `INSERT INTO raw_payload (ingestion_run_id, endpoint, provider_symbol, params, http_status, content_hash, fetched_at)
@@ -124,13 +130,14 @@ export async function capture(scope: string, jobs: Job[], options: CaptureOption
 
     jobLoop: for (const job of jobs) {
       for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        if (options.signal?.aborted) { stoppedBy = 'abort'; break jobLoop; }
         if (spent + job.cost > budget) { stoppedBy = 'budget'; break jobLoop; }
         if (minIntervalMs > 0) { const wait = lastCallAt + minIntervalMs - now(); if (wait > 0) await sleep(wait); }
         lastCallAt = now();
         const result = await fetcher(job);
         spent += job.cost;
         attempts++;
-        await recordAttempt(runId, job, result);
+        await recordAttempt(runId, job, result, options.encodeBody);
         if (isOk(result)) { ok++; jobsDone++; break; }
         errors++;
         const status = result.kind === 'response' ? result.status : undefined;
