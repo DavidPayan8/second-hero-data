@@ -6,6 +6,9 @@ import { capture } from './eodhd/ingest.js';
 import { buildJobs } from './eodhd/jobs.js';
 import { keepPrimaryListings } from './eodhd/universe.js';
 import { replay } from './eodhd/replay.js';
+import { captureBatch, captureIndex, planBatch } from './esef/capture.js';
+import { extractAll } from './esef/extract.js';
+import { ESEF_CONFIG } from './esef/config.js';
 
 const [cmd, ...args] = process.argv.slice(2);
 const flag = (name: string) => args.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3);
@@ -58,6 +61,37 @@ try {
       const s = await captureSec(ciks, { log: (m) => console.log(m) });
       console.log(`Corrida ${s.runId}: ${s.status}. Intentos ${s.attempts}, ok ${s.ok}, errores ${s.errors}, trabajos ${s.jobsDone}/${jobs.length}.`);
     }
+  } else if (cmd === 'esef-capture') {
+    // Segunda fuente europea (ESEF/UKSEF, filings.xbrl.org). Sin --go es un dry-run; con --go exige SEC_USER_AGENT (se reutiliza), máximo 1 petición por segundo.
+    // --index: foto del índice completo (una vez). --batch: informes de esa foto filtrando por --country, --year o --leis.
+    const list = (n: string) => flag(n)?.split(',').map((x) => x.trim()).filter(Boolean);
+    const go = args.includes('--go');
+    const ac = new AbortController();
+    process.once('SIGINT', () => { console.log('Interrumpido: se cierra la corrida tras la llamada en curso.'); ac.abort(); });
+    if (args.includes('--index')) {
+      if (!go) console.log('ESEF índice: se descargarían todas las páginas del índice de filings.xbrl.org (una foto de referencia). Sin --go no se llama.');
+      else {
+        const s = await captureIndex({ log: (m) => console.log(m), signal: ac.signal });
+        console.log(`Corrida ${s.runId}: ${s.status}. Intentos ${s.attempts}, ok ${s.ok}, errores ${s.errors}, páginas ${s.jobsDone}/${s.jobsDone + s.jobsSkipped}${s.stoppedBy ? `, parada por ${s.stoppedBy}` : ''}.`);
+      }
+    } else if (args.includes('--batch')) {
+      const limit = flag('limit');
+      const filters = { ...(list('country') ? { countries: list('country')! } : {}), ...(list('year') ? { years: list('year')! } : {}), ...(list('leis') ? { leis: list('leis')! } : {}), ...(limit ? { limit: Number(limit) } : {}) };
+      if (!go) {
+        const plan = await planBatch(filters);
+        console.log(`ESEF lote ${plan.scope} (foto del índice: corrida ${plan.indexRunId}): ${plan.candidates} informes cumplen los filtros, ${plan.alreadyCaptured} ya capturados, ${plan.jobs.length} por descargar (~${Math.ceil(plan.jobs.length * ESEF_CONFIG.minIntervalMs / 60000)} min como mínimo).`);
+        for (const j of plan.jobs.slice(0, 20)) console.log(`  [dry-run] ${j.params.fxo_id}`);
+        if (plan.jobs.length > 20) console.log(`  … y ${plan.jobs.length - 20} más`);
+        console.log('Sin --go no se llama.');
+      } else {
+        const s = await captureBatch(filters, { log: (m) => console.log(m), signal: ac.signal });
+        console.log(`Corrida ${s.runId} (${s.scope}): ${s.status}. ${s.plan.candidates} candidatos, ${s.plan.alreadyCaptured} ya capturados. Intentos ${s.attempts}, ok ${s.ok}, errores ${s.errors}, trabajos ${s.jobsDone}/${s.plan.jobs}${s.stoppedBy ? `, parada por ${s.stoppedBy}` : ''}.`);
+      }
+    } else throw new Error('esef-capture necesita --index o --batch');
+  } else if (cmd === 'esef-extract') {
+    // Extractor de ESEF: del crudo (raw_payload + payload_blob) a esef_filing + esef_fact. Sin red.
+    const s = await extractAll({ ...(flag('run') ? { runId: flag('run')! } : {}), all: args.includes('--all') });
+    console.log(`Extractor ${ESEF_CONFIG.extractorVersion}: ${s.checked} payloads revisados, ${s.filings} informes anuales, ${s.facts} hechos, ${s.skippedNotAnnual} sin periodo anual (descartados), ${s.error} con error.`);
   } else {
     console.log([
       'Uso:',
@@ -65,6 +99,9 @@ try {
       '  npm run replay [-- --run=ID] [--all]   (--all vuelve a pasar también lo ya marcado)',
       '  npm run validate [-- --today=YYYY-MM-DD] [--rules=A,B]   (ejecuta las reglas activas del catálogo)',
       '  npm run sec-capture [-- --ciks=0000320193,...] [--go]   (companyfacts de la SEC; exige SEC_USER_AGENT en .env)',
+      '  npm run esef-capture -- --index [--go]   (foto del índice de filings.xbrl.org; ≤ 1 petición/s; exige SEC_USER_AGENT)',
+      '  npm run esef-capture -- --batch [--country=ES,GB] [--year=2023] [--leis=...] [--limit=N] [--go]   (informes de la foto; reanudable)',
+      '  npm run esef-extract [-- --run=ID] [--all]   (xBRL-JSON crudo -> esef_filing y esef_fact; sin red)',
     ].join('\n'));
   }
 } finally {

@@ -16,6 +16,8 @@
     "replay": "tsx src/cli.ts replay",
     "validate": "tsx src/cli.ts validate",
     "sec-capture": "tsx src/cli.ts sec-capture",
+    "esef-capture": "tsx src/cli.ts esef-capture",
+    "esef-extract": "tsx src/cli.ts esef-extract",
     "quota": "tsx src/eodhd/user.ts"
   },
   "dependencies": {
