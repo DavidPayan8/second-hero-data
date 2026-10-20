@@ -131,6 +131,21 @@ Extensiones: un concepto propio de la empresa no se adivina. Se emite `ESEF_UNMA
 2. Cada fila lleva `extractor_version`; si cambia el extractor se regenera, no se parchea.
 3. Nadie la edita a mano. Las decisiones de los admins van en sus propias tablas.
 
+### 8.1 bis Almacenamiento del crudo: zstd nivel 19 (decidido por David, 2026-10-20)
+Los cuerpos de ESEF se guardan **comprimidos con zstd nivel 19** en `payload_blob.body`. Evidencia: `docs/esef/medicion-compresion.md` (32 informes, 260,9 MB en bruto):
+
+| Método | Comprimido | Compresión | Descompresión por informe medio |
+|---|---|---|---|
+| gzip -9 | 14,8 MB (5,7 %) | 78 MB/s | 14 ms |
+| brotli 11 | 4,45 MB (1,7 %) | 1,2 MB/s | 23 ms |
+| **zstd 19** | **5,35 MB (2,0 %)** | 4,1 MB/s | 13 ms |
+
+Extrapolado a los 13 638 informes del índice: ≈ 166 GB en bruto frente a ≈ 3,2 GB con zstd 19 (cota alta: la muestra son grandes cotizadas). Se elige zstd porque comprime casi como brotli, 3,4 veces más rápido, y descomprime lo más deprisa. Postgres (TOAST con pglz o lz4) **no se midió** (Docker apagado entonces).
+
+- `payload_blob.content_hash` sigue siendo el sha256 del cuerpo **sin comprimir** (es la identidad del contenido y lo que se verifica al releer); `size_bytes` es el tamaño sin comprimir. `body_format = 'json+zstd'` para estos cuerpos.
+- **Solo ESEF.** Los payloads de EODHD y de la SEC no cambian (`body_format = 'json'`, bytes tal cual).
+- El **nivel 19 es provisional** y vive en un único sitio (`ESEF_ZSTD_LEVEL` en `src/esef/codec.ts`), anotado en `docs/registro.md`. Cambiarlo no exige migrar lo ya guardado: zstd descomprime cualquier nivel.
+- Requiere Node ≥ 22.15 (`zlib.zstdCompress`): `.nvmrc` y `engines` de `package.json`.
 ### 8.2 Tablas nuevas (columnas ajustadas con el spike; el DDL definitivo se escribe en la fase 1)
 - `esef_filing`: `esef_filing_id`, `fxo_id` (único; lleva la versión `-n` de la presentación), `content_hash` (→ `payload_blob`), `index_sha256` (el `sha256` del índice, distinto del anterior), `lei`, `country`, `period_start` y `period_end` **reales, extraídos de los hechos**, `index_period_end` (el del índice, solo informativo), `processed_at`, `date_added`, `report_url`, `viewer_url`, `json_url`, `error_count`, `warning_count`, `inconsistency_count`, `ifrs_taxonomy` (versión, de `documentInfo`). Sin columna anual/intermedio ni «versión elegida»: se derivan de `period_start`/`period_end` y de `error_count`/`processed_at`. Moneda del informe: se decide al escribir el extractor (pueden convivir varias en un informe; Q6 abierta).
 - `esef_fact`: `esef_filing_id`, `concept` (QName, p. ej. `ifrs-full:Revenue`), `is_extension`, `period_start`, `period_end` (cierre real: ya restado el día de más del xBRL-JSON; para un instante, `period_start` NULL), `value` (`numeric`, texto exacto), `decimals` (NULL si el hecho no lo trae), `unit`, `extractor_version`. **Guarda TODOS los hechos numéricos sin dimensiones** (decisión de David, 2026-10-19), no solo los de la tabla 6: los admins tienen que poder mapear extensiones desde el panel y una extensión fuera de la tabla no se podría mapear. Volumen medido en el spike: ≈ 5,1 M filas (13 638 informes anuales e intermedios `(LEI, cierre)` entre 2021-01 y 2026-06, ~350–380 hechos numéricos sin dimensiones por informe); la muestra son grandes cotizadas, así que es una cota alta. Se descartan los hechos con valor `null` (nil) y los que llevan dimensiones. Sigue siendo una proyección regenerable desde el crudo (8.1).
