@@ -8,6 +8,7 @@ import { keepPrimaryListings } from './eodhd/universe.js';
 import { replay } from './eodhd/replay.js';
 import { captureBatch, captureIndex, planBatch } from './esef/capture.js';
 import { extractAll } from './esef/extract.js';
+import { identifyAll, loadListIndex } from './esef/identify.js';
 import { ESEF_CONFIG } from './esef/config.js';
 
 const [cmd, ...args] = process.argv.slice(2);
@@ -92,6 +93,19 @@ try {
     // Extractor de ESEF: del crudo (raw_payload + payload_blob) a esef_filing + esef_fact. Sin red.
     const s = await extractAll({ ...(flag('run') ? { runId: flag('run')! } : {}), all: args.includes('--all') });
     console.log(`Extractor ${ESEF_CONFIG.extractorVersion}: ${s.checked} payloads revisados, ${s.filings} informes anuales, ${s.facts} hechos, ${s.skippedNotAnnual} sin periodo anual (descartados), ${s.error} con error.`);
+  } else if (cmd === 'esef-identify') {
+    // Candidatos LEI -> ISIN (P20): GLEIF filtrado contra las listas de bolsa capturadas. Sin --go es un dry-run (no llama a GLEIF ni escribe).
+    const leis = flag('leis')?.split(',').map((x) => x.trim()).filter(Boolean);
+    if (!args.includes('--go')) {
+      const listed = await loadListIndex();
+      console.log(`ESEF identificar: ${listed.size} ISIN en las listas de bolsa capturadas (sin EEUU). Se pedirían a GLEIF los ISIN de ${leis?.length ?? 'todos los'} LEI de esef_filing (~1 petición por segundo). Sin --go no se llama.`);
+    } else {
+      if (!config.secUserAgent) throw new Error('esef-identify necesita SEC_USER_AGENT en .env (User-Agent con nombre y contacto)');
+      const ac = new AbortController();
+      process.once('SIGINT', () => { console.log('Interrumpido: se cierra tras el LEI en curso.'); ac.abort(); });
+      const s = await identifyAll({ ...(leis ? { leis } : {}), log: (m) => console.log(m), signal: ac.signal });
+      console.log(`Identificar: ${s.leis} LEI, ${s.listIsins} ISIN en listas. Con candidato ${s.withCandidate} (aceptados automáticos ${s.accepted}, propuestos ${s.proposed}); GLEIF sin ISIN ${s.noGleifIsin}; listas truncadas ${s.truncated}; errores ${s.failed}.`);
+    }
   } else {
     console.log([
       'Uso:',
@@ -102,6 +116,7 @@ try {
       '  npm run esef-capture -- --index [--go]   (foto del índice de filings.xbrl.org; ≤ 1 petición/s; exige SEC_USER_AGENT)',
       '  npm run esef-capture -- --batch [--country=ES,GB] [--year=2023] [--leis=...] [--limit=N] [--go]   (informes de la foto; reanudable)',
       '  npm run esef-extract [-- --run=ID] [--all]   (xBRL-JSON crudo -> esef_filing y esef_fact; sin red)',
+      '  npm run esef-identify [-- --leis=...] [--go]   (candidatos LEI -> ISIN con GLEIF contra las listas de bolsa; exige SEC_USER_AGENT; sin --go es dry-run)',
     ].join('\n'));
   }
 } finally {

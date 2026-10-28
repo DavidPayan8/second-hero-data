@@ -10,7 +10,7 @@ afterAll(closePool);
 
 const id = async (c: pg.PoolClient, sql: string, params: unknown[] = []) => (await c.query<{ id: string }>(sql, params)).rows[0]!.id;
 
-test('A1: existen exactamente las 36 tablas del modelo y las 2 de P19 (sin contar schema_migrations)', async () => {
+test('A1: existen exactamente las 36 tablas del modelo y las 3 de P19 y P20 (sin contar schema_migrations)', async () => {
   const modelo = [
     // núcleo
     'asset_type', 'exchange', 'sector', 'industry', 'company', 'security', 'listing', 'listing_ticker_change',
@@ -28,7 +28,8 @@ test('A1: existen exactamente las 36 tablas del modelo y las 2 de P19 (sin conta
   ].sort();
   expect(modelo).toHaveLength(36);
   // P19 (018_esef): proyección regenerable de la segunda fuente europea; no son del mapa de las 36 tablas.
-  const p19 = ['esef_filing', 'esef_fact'];
+  // P20 (019_esef_lei_isin): candidatos LEI -> ISIN para enlazar ESEF con los valores.
+  const p19 = ['esef_filing', 'esef_fact', 'esef_lei_isin'];
   const { rows } = await pool.query<{ table_name: string }>("SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE' AND table_name <> 'schema_migrations' ORDER BY 1");
   expect(rows.map((r) => r.table_name)).toEqual([...modelo, ...p19].sort());
 });

@@ -18,6 +18,7 @@
     "sec-capture": "tsx src/cli.ts sec-capture",
     "esef-capture": "tsx src/cli.ts esef-capture",
     "esef-extract": "tsx src/cli.ts esef-extract",
+    "esef-identify": "tsx src/cli.ts esef-identify",
     "quota": "tsx src/eodhd/user.ts"
   },
   "dependencies": {
