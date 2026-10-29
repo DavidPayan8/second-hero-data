@@ -20,4 +20,6 @@ export const config = {
   adminSessionSecret: process.env.ADMIN_SESSION_SECRET ?? '',
   adminPort: Number(process.env.PORT ?? process.env.ADMIN_PORT ?? 3000),
   adminHost: process.env.ADMIN_HOST ?? '127.0.0.1',
+  // ADMIN_TRUST_PROXY=1 en Azure: usa X-Forwarded-For / X-Forwarded-Proto del proxy. En local déjalo vacío (cualquiera podría falsearlas).
+  adminTrustProxy: process.env.ADMIN_TRUST_PROXY === '1',
 };

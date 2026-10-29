@@ -14,7 +14,9 @@ const TIPOS: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.j
 const LOGIN_MAX_FALLOS = 10;
 const LOGIN_VENTANA_MS = 15 * 60 * 1000;
 
-export interface OpcionesServidor { db: Queryable; users: Map<string, string>; secret: string }
+// trustProxy: detrás de Azure App Service el socket siempre viene del proxy. Con true se usa la última IP de X-Forwarded-For
+// (la añade el proxy; las anteriores las puede poner cualquiera) y x-forwarded-proto para la marca Secure.
+export interface OpcionesServidor { db: Queryable; users: Map<string, string>; secret: string; trustProxy?: boolean }
 
 class HttpError extends Error { constructor(public status: number, msg: string) { super(msg); } }
 
@@ -42,7 +44,15 @@ async function leerJson(req: http.IncomingMessage): Promise<Record<string, unkno
 const cookieDe = (req: http.IncomingMessage): string | undefined =>
   (req.headers.cookie ?? '').split(';').map((s) => s.trim()).find((s) => s.startsWith(`${COOKIE}=`))?.slice(COOKIE.length + 1);
 
-const atributosCookie = (): string => `Path=/; HttpOnly; SameSite=Strict${process.env.NODE_ENV === 'production' ? '; Secure' : ''}`;
+function ipCliente(req: http.IncomingMessage, trustProxy: boolean): string {
+  const xff = trustProxy ? String(req.headers['x-forwarded-for'] ?? '').split(',').pop()?.trim() : '';
+  if (!xff) return req.socket.remoteAddress ?? '?';
+  return xff.replace(/^(\d+\.\d+\.\d+\.\d+):\d+$/, '$1').replace(/^\[(.+)\]:\d+$/, '$1');
+}
+const atributosCookie = (req: http.IncomingMessage, trustProxy: boolean): string => {
+  const https = process.env.NODE_ENV === 'production' || (trustProxy && String(req.headers['x-forwarded-proto'] ?? '').split(',')[0]?.trim() === 'https');
+  return `Path=/; HttpOnly; SameSite=Strict${https ? '; Secure' : ''}`;
+};
 
 async function estatico(res: http.ServerResponse, nombre: string): Promise<void> {
   const ruta = path.resolve(PUBLIC_DIR, nombre);
@@ -55,7 +65,7 @@ async function estatico(res: http.ServerResponse, nombre: string): Promise<void>
 }
 
 export function crearServidor(opts: OpcionesServidor): http.Server {
-  const { db, users, secret } = opts;
+  const { db, users, secret, trustProxy = false } = opts;
   const fallos = new Map<string, number[]>();
 
   const manejar = async (req: http.IncomingMessage, res: http.ServerResponse): Promise<void> => {
@@ -72,8 +82,9 @@ export function crearServidor(opts: OpcionesServidor): http.Server {
     if (!ruta.startsWith('/api/')) throw new HttpError(404, 'no encontrado');
 
     if (metodo === 'POST' && ruta === '/api/login') {
-      const ip = req.socket.remoteAddress ?? '?';
+      const ip = ipCliente(req, trustProxy);
       const ahora = Date.now();
+      if (fallos.size > 1000) for (const [k, v] of fallos) if (v.every((t) => ahora - t >= LOGIN_VENTANA_MS)) fallos.delete(k);
       const recientes = (fallos.get(ip) ?? []).filter((t) => ahora - t < LOGIN_VENTANA_MS);
       if (recientes.length >= LOGIN_MAX_FALLOS) throw new HttpError(429, 'demasiados intentos, espera unos minutos');
       const b = await leerJson(req);
@@ -83,9 +94,9 @@ export function crearServidor(opts: OpcionesServidor): http.Server {
         fallos.set(ip, [...recientes, ahora]);
         throw new HttpError(401, 'usuario o clave incorrectos');
       }
-      return enviar(res, 200, { usuario }, { 'set-cookie': `${COOKIE}=${firmarSesion(usuario, secret)}; ${atributosCookie()}; Max-Age=${SESION_MAX_MS / 1000}` });
+      return enviar(res, 200, { usuario }, { 'set-cookie': `${COOKIE}=${firmarSesion(usuario, secret)}; ${atributosCookie(req, trustProxy)}; Max-Age=${SESION_MAX_MS / 1000}` });
     }
-    if (metodo === 'POST' && ruta === '/api/logout') return enviar(res, 200, {}, { 'set-cookie': `${COOKIE}=; ${atributosCookie()}; Max-Age=0` });
+    if (metodo === 'POST' && ruta === '/api/logout') return enviar(res, 200, {}, { 'set-cookie': `${COOKIE}=; ${atributosCookie(req, trustProxy)}; Max-Age=0` });
 
     const usuario = leerSesion(cookieDe(req), secret);
     if (!usuario) throw new HttpError(401, 'hace falta iniciar sesión');

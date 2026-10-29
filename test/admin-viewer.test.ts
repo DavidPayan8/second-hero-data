@@ -5,7 +5,7 @@ import { abrir, buscar, VIEWER_MAX_BYTES, VisorError } from '../src/admin/viewer
 import { migrate } from '../src/db/migrate.js';
 import { closePool } from '../src/db/pool.js';
 import { seed } from '../src/db/seed.js';
-import { compressBody, ESEF_BODY_FORMAT } from '../src/esef/codec.js';
+import { compressBody, decodeBody, ESEF_BODY_FORMAT } from '../src/esef/codec.js';
 import { inRollback } from './helpers.js';
 
 beforeAll(async () => { await migrate(); await seed(); });
@@ -61,6 +61,20 @@ describe('abrir', () => {
     await c.query("INSERT INTO payload_blob (content_hash, body, body_format, size_bytes, purged_at) VALUES ($1,NULL,'json',5, now())", ['a'.repeat(64)]);
     await expect(abrir(c, 'a'.repeat(64))).rejects.toBeInstanceOf(VisorError);
     await expect(abrir(c, 'a'.repeat(64))).rejects.toMatchObject({ status: 404 });
+  }));
+});
+
+describe('tope de descompresión', () => {
+  test('decodeBody con maxBytes corta una bomba zstd sin devolver el cuerpo', () => {
+    const bomba = compressBody(Buffer.alloc(5_000_000));
+    expect(bomba.length).toBeLessThan(10_000);
+    expect(() => decodeBody(bomba, ESEF_BODY_FORMAT, 1_000_000)).toThrow();
+    expect(decodeBody(bomba, ESEF_BODY_FORMAT, 6_000_000).length).toBe(5_000_000);
+  });
+  test('abrir da 413 aunque size_bytes mienta (diga 2 y el cuerpo descomprima a más del tope)', () => inRollback(async (c) => {
+    const grande = Buffer.alloc(VIEWER_MAX_BYTES + 1024, 0x20);
+    const h = await blob(c, grande, ESEF_BODY_FORMAT, { size: 2 });
+    await expect(abrir(c, h)).rejects.toMatchObject({ status: 413 });
   }));
 });
 

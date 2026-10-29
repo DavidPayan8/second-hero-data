@@ -72,6 +72,33 @@ describe('límite de intentos', () => {
   }));
 });
 
+describe('detrás de un proxy (ADMIN_TRUST_PROXY)', () => {
+  async function conProxy(fn: (url: string) => Promise<void>): Promise<void> {
+    await inRollback(async (c) => {
+      const srv = crearServidor({ db: c, users, secret: SECRETO, trustProxy: true });
+      await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
+      try { await fn(`http://127.0.0.1:${(srv.address() as AddressInfo).port}`); } finally { await new Promise((r) => srv.close(r)); }
+    });
+  }
+  const intento = (url: string, ip: string, clave: string) => fetch(`${url}/api/login`, {
+    method: 'POST', headers: { 'content-type': 'application/json', 'x-forwarded-for': `1.1.1.1, ${ip}` }, body: JSON.stringify({ usuario: 'david', clave }),
+  });
+  test('el límite se cuenta por la última IP de X-Forwarded-For (la que añade el proxy), sin el puerto', () => conProxy(async (url) => {
+    for (let i = 0; i < 10; i++) expect((await intento(url, '9.9.9.9:5555', 'mala')).status).toBe(401);
+    expect((await intento(url, '9.9.9.9:6666', 'mala')).status).toBe(429);
+    expect((await intento(url, '8.8.8.8:1', 'clave-david')).status).toBe(200);
+  }));
+  test('con x-forwarded-proto https la cookie lleva Secure aunque NODE_ENV no sea production', () => conProxy(async (url) => {
+    const r = await fetch(`${url}/api/login`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-forwarded-proto': 'https' }, body: JSON.stringify({ usuario: 'david', clave: 'clave-david' }) });
+    expect(r.headers.get('set-cookie')).toContain('Secure');
+  }));
+  test('sin ADMIN_TRUST_PROXY se ignoran las cabeceras X-Forwarded-*', () => conServidor(async (url) => {
+    for (let i = 0; i < 10; i++) await fetch(`${url}/api/login`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-forwarded-for': `7.7.7.${i}` }, body: JSON.stringify({ usuario: 'david', clave: 'mala' }) });
+    const r = await fetch(`${url}/api/login`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-forwarded-for': '7.7.7.99', 'x-forwarded-proto': 'https' }, body: JSON.stringify({ usuario: 'david', clave: 'clave-david' }) });
+    expect(r.status).toBe(429);
+  }));
+});
+
 describe('revisión', () => {
   test('la decisión guarda reviewed_by de la sesión aunque el cuerpo traiga otro', () => conServidor(async (url, c) => {
     await sembrar(c);

@@ -10,8 +10,9 @@ export const ESEF_ZSTD_LEVEL = 19;
 export const compressBody = (body: Buffer): Buffer => zstdCompressSync(body, { params: { [constants.ZSTD_c_compressionLevel]: ESEF_ZSTD_LEVEL } });
 
 // Devuelve los bytes originales según el formato con que se guardó el blob.
-export function decodeBody(body: Buffer, format: string): Buffer {
+// maxBytes (opcional) corta la descompresión en cuanto la salida lo supera: lanza ERR_BUFFER_TOO_LARGE sin llegar a reservar el resto.
+export function decodeBody(body: Buffer, format: string, maxBytes?: number): Buffer {
   if (format === 'json') return body;
-  if (format === ESEF_BODY_FORMAT) return zstdDecompressSync(body);
+  if (format === ESEF_BODY_FORMAT) return zstdDecompressSync(body, maxBytes === undefined ? undefined : { maxOutputLength: maxBytes });
   throw new Error(`body_format desconocido: ${format}`);
 }

@@ -128,7 +128,7 @@ try {
     const users = parseUsers(config.adminUsers);
     if (users.size === 0) throw new Error('admin necesita ADMIN_USERS en .env (genera cada hash con: npm run admin-hash -- <clave>)');
     if (config.adminSessionSecret.length < 16) throw new Error('admin necesita ADMIN_SESSION_SECRET (≥ 16 caracteres) en .env');
-    const srv = crearServidor({ db: pool, users, secret: config.adminSessionSecret });
+    const srv = crearServidor({ db: pool, users, secret: config.adminSessionSecret, trustProxy: config.adminTrustProxy });
     await new Promise<void>((resolve, reject) => { srv.once('error', reject); srv.listen(config.adminPort, config.adminHost, resolve); });
     console.log(`Panel en http://${config.adminHost}:${config.adminPort} (usuarios: ${[...users.keys()].join(', ')}). Ctrl+C para parar.`);
     await new Promise<void>((resolve) => process.once('SIGINT', () => { srv.close(); resolve(); }));

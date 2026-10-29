@@ -54,8 +54,11 @@ export async function abrir(c: Queryable, contentHash: string): Promise<{ resume
   if (!r || r.body === null) throw new VisorError(404, r ? 'el cuerpo está purgado' : 'no existe ese hash');
   if (Number(r.size_bytes) > VIEWER_MAX_BYTES) throw new VisorError(413, `el cuerpo supera el tope de ${VIEWER_MAX_BYTES} bytes`);
   let bytes: Buffer;
-  try { bytes = decodeBody(r.body, r.body_format); } catch (e) { throw new VisorError(422, (e as Error).message); }
-  if (bytes.length > VIEWER_MAX_BYTES) throw new VisorError(413, `el cuerpo supera el tope de ${VIEWER_MAX_BYTES} bytes`);
+  // size_bytes viene de la BD y no se verifica: el tope real se impone mientras se descomprime.
+  try { bytes = decodeBody(r.body, r.body_format, VIEWER_MAX_BYTES); } catch (e) {
+    if ((e as { code?: string }).code === 'ERR_BUFFER_TOO_LARGE') throw new VisorError(413, `el cuerpo supera el tope de ${VIEWER_MAX_BYTES} bytes`);
+    throw new VisorError(422, (e as Error).message);
+  }
   let json: unknown;
   try { json = JSON.parse(bytes.toString('utf8')); } catch { throw new VisorError(422, 'el cuerpo no es JSON'); }
   return { resumen: aResumen(r), hashOk: createHash('sha256').update(bytes).digest('hex') === contentHash, json };
