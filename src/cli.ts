@@ -1,5 +1,6 @@
 import { hashPassword, parseUsers } from './admin/auth.js';
 import { crearServidor } from './admin/server.js';
+import pg from 'pg';
 import { config } from './config.js';
 import { closePool, pool } from './db/pool.js';
 import { captureSec, secJobs } from './sec/client.js';
@@ -11,6 +12,7 @@ import { replay } from './eodhd/replay.js';
 import { captureBatch, captureIndex, planBatch } from './esef/capture.js';
 import { extractAll } from './esef/extract.js';
 import { identifyAll, loadListIndex } from './esef/identify.js';
+import { insertarSiFalta, leerTodas, planPull, planPush, upsertRevision } from './esef/sync.js';
 import { ESEF_CONFIG } from './esef/config.js';
 
 const [cmd, ...args] = process.argv.slice(2);
@@ -108,6 +110,19 @@ try {
       const s = await identifyAll({ ...(leis ? { leis } : {}), log: (m) => console.log(m), signal: ac.signal });
       console.log(`Identificar: ${s.leis} LEI, ${s.listIsins} ISIN en listas. Con candidato ${s.withCandidate} (aceptados automáticos ${s.accepted}, propuestos ${s.proposed}); GLEIF sin ISIN ${s.noGleifIsin}; listas truncadas ${s.truncated}; errores ${s.failed}.`);
     }
+  } else if (cmd === 'esef-push-candidates' || cmd === 'esef-pull-reviews') {
+    // Sincroniza esef_lei_isin con Azure: push = candidatos que faltan allí (no pisa nada); pull = revisiones hechas allí. Sin --go es dry-run.
+    if (!config.azureDatabaseUrl) throw new Error(`${cmd} necesita AZURE_DATABASE_URL en .env (con ?sslmode=require)`);
+    const azure = new pg.Pool({ connectionString: config.azureDatabaseUrl, max: 2 });
+    try {
+      const [local, remoto] = [await leerTodas(pool), await leerTodas(azure)];
+      const plan = cmd === 'esef-push-candidates' ? planPush(local, remoto) : planPull(remoto, local);
+      console.log(`${cmd}: local ${local.length} filas, Azure ${remoto.length}; se escribirían ${plan.length} en ${cmd === 'esef-push-candidates' ? 'Azure' : 'local'}.`);
+      if (args.includes('--go')) {
+        const n = cmd === 'esef-push-candidates' ? await insertarSiFalta(azure, plan) : await upsertRevision(pool, plan);
+        console.log(`Escritas ${n}.`);
+      } else console.log('Sin --go no se escribe.');
+    } finally { await azure.end(); }
   } else if (cmd === 'admin') {
     // Panel web de revisión de esef_lei_isin y visor de payload_blob. Se queda escuchando hasta Ctrl+C.
     const users = parseUsers(config.adminUsers);
@@ -125,6 +140,8 @@ try {
       'Uso:',
       '  npm run admin   (panel web de revisión ESEF y visor de payload; exige ADMIN_USERS y ADMIN_SESSION_SECRET)',
       '  npm run admin-hash -- <clave>   (hash para ADMIN_USERS)',
+      '  npm run esef-push-candidates [-- --go]   (sube a Azure los candidatos de esef_lei_isin que faltan; exige AZURE_DATABASE_URL; sin --go es dry-run)',
+      '  npm run esef-pull-reviews [-- --go]   (trae a local las revisiones hechas en Azure; sin --go es dry-run)',
       '  npm run capture -- --scope=symbols:LSE [--symbols=AAPL.US,...] [--budget=N] [--demo] [--go]   (sin --go es dry-run; --demo usa la clave pública demo)',
       '  npm run replay [-- --run=ID] [--all]   (--all vuelve a pasar también lo ya marcado)',
       '  npm run validate [-- --today=YYYY-MM-DD] [--rules=A,B]   (ejecuta las reglas activas del catálogo)',

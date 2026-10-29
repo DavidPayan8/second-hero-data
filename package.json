@@ -19,7 +19,9 @@
     "esef-capture": "tsx src/cli.ts esef-capture",
     "esef-extract": "tsx src/cli.ts esef-extract",
     "esef-identify": "tsx src/cli.ts esef-identify",
-    "admin": "tsx src/cli.ts admin",
+    "esef-push-candidates": "tsx src/cli.ts esef-push-candidates",
+    "esef-pull-reviews": "tsx src/cli.ts esef-pull-reviews",
+    "admin":"tsx src/cli.ts admin",
     "admin-hash": "tsx src/cli.ts admin-hash",
     "quota":"tsx src/eodhd/user.ts"
   },
