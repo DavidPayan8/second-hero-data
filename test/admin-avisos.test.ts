@@ -15,8 +15,7 @@ describe('avisoDe', () => {
   test('doble clase (Volvo A y B) -> revisar con motivo otra clase', () => {
     const a = f('SE0000115420', 'SE');
     const b = f('SE0000115446', 'SE');
-    for (const [x, y] of [[a, b], [b, a]]) {
-      const r = avisoDe(x, [y]);
+    for (const r of [avisoDe(a, [b]), avisoDe(b, [a])]) {
       expect(r.aviso).toBe('revisar');
       expect(r.motivo).toContain('otra clase');
     }
