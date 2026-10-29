@@ -1,3 +1,75 @@
 <!doctype html>
-<html lang="es"><head><meta charset="utf-8"><title>second-hero admin</title></head>
-<body><p>Panel en construcción.</p></body></html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>second-hero · panel ESEF</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header id="top" hidden>
+    <div class="brand">second-hero <span>panel ESEF</span></div>
+    <nav>
+      <button data-tab="revision" class="tab active">Revisión</button>
+      <button data-tab="visor" class="tab">Visor de payload</button>
+    </nav>
+    <div class="who"><span id="who"></span> <button id="logout" class="link">Salir</button></div>
+  </header>
+
+  <main>
+    <section id="login" hidden>
+      <form id="login-form" class="login-card">
+        <h1>Entrar</h1>
+        <label>Usuario <input name="usuario" autocomplete="username" required></label>
+        <label>Clave <input name="clave" type="password" autocomplete="current-password" required></label>
+        <button class="primary" type="submit">Entrar</button>
+        <p id="login-error" class="error" role="alert"></p>
+      </form>
+    </section>
+
+    <section id="revision" hidden>
+      <div class="intro">
+        <h1>Revisar vínculos LEI ↔ ISIN</h1>
+        <p>GLEIF propone qué ISIN pertenecen a cada empresa de los informes ESEF. Para cada fila decide si ese ISIN es una acción de la empresa que quieres guardar.
+          Tus cambios se guardan al momento y se pueden deshacer volviendo a <b>Pendiente</b>.</p>
+      </div>
+      <div class="bar">
+        <div class="progress-text" id="progress-text"></div>
+        <div class="progress"><div id="progress-fill"></div></div>
+        <label class="check"><input type="checkbox" id="solo-pendientes"> Solo empresas con pendientes</label>
+        <button id="aplicar" class="primary">Aplicar sugerencias</button>
+      </div>
+      <p id="revision-msg" class="msg" role="status"></p>
+      <div id="empresas"></div>
+    </section>
+
+    <section id="visor" hidden>
+      <div class="intro">
+        <h1>Visor de payload</h1>
+        <p>Busca un cuerpo guardado por su hash, su fuente (<code>eodhd</code>, <code>sec</code>…) o parte del endpoint. Se descomprime y se muestra como JSON.</p>
+      </div>
+      <form id="buscar-form" class="bar">
+        <input id="buscar-q" placeholder="hash, fuente o endpoint" required>
+        <button class="primary" type="submit">Buscar</button>
+      </form>
+      <p id="visor-msg" class="msg" role="status"></p>
+      <div class="visor-grid">
+        <ul id="resultados" class="resultados"></ul>
+        <div id="detalle" class="detalle" hidden>
+          <div class="meta" id="meta"></div>
+          <div class="vtabs">
+            <button data-vista="arbol" class="vtab active">Árbol</button>
+            <button data-vista="texto" class="vtab">Texto</button>
+            <button data-vista="tabla" class="vtab" id="vtab-tabla">Tabla</button>
+            <span class="spacer"></span>
+            <button id="copiar" class="link">Copiar</button>
+            <button id="descargar" class="link">Descargar .json</button>
+          </div>
+          <div id="vista"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>
