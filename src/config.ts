@@ -12,4 +12,10 @@ export const config = {
   // 2ª fuente: la SEC (data.sec.gov, sin token). Exige un User-Agent con nombre y contacto (SEC_USER_AGENT en .env).
   secUserAgent: (process.env.SEC_USER_AGENT ?? '').trim(),
   secBase: 'https://data.sec.gov',
+  // Panel web (src/admin). ADMIN_USERS = "david=<hash>,alberto=<hash>" (hashes de `npm run admin-hash -- <clave>`).
+  // En Azure App Service el puerto llega en PORT y hay que escuchar en 0.0.0.0 (ADMIN_HOST).
+  adminUsers: process.env.ADMIN_USERS ?? '',
+  adminSessionSecret: process.env.ADMIN_SESSION_SECRET ?? '',
+  adminPort: Number(process.env.PORT ?? process.env.ADMIN_PORT ?? 3000),
+  adminHost: process.env.ADMIN_HOST ?? '127.0.0.1',
 };

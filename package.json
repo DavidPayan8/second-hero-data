@@ -19,7 +19,9 @@
     "esef-capture": "tsx src/cli.ts esef-capture",
     "esef-extract": "tsx src/cli.ts esef-extract",
     "esef-identify": "tsx src/cli.ts esef-identify",
-    "quota": "tsx src/eodhd/user.ts"
+    "admin": "tsx src/cli.ts admin",
+    "admin-hash": "tsx src/cli.ts admin-hash",
+    "quota":"tsx src/eodhd/user.ts"
   },
   "dependencies": {
     "dotenv": "^18.0.7",

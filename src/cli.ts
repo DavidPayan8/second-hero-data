@@ -1,3 +1,5 @@
+import { hashPassword, parseUsers } from './admin/auth.js';
+import { crearServidor } from './admin/server.js';
 import { config } from './config.js';
 import { closePool, pool } from './db/pool.js';
 import { captureSec, secJobs } from './sec/client.js';
@@ -106,9 +108,23 @@ try {
       const s = await identifyAll({ ...(leis ? { leis } : {}), log: (m) => console.log(m), signal: ac.signal });
       console.log(`Identificar: ${s.leis} LEI, ${s.listIsins} ISIN en listas. Con candidato ${s.withCandidate} (aceptados automáticos ${s.accepted}, propuestos ${s.proposed}); GLEIF sin ISIN ${s.noGleifIsin}; listas truncadas ${s.truncated}; errores ${s.failed}.`);
     }
+  } else if (cmd === 'admin') {
+    // Panel web de revisión de esef_lei_isin y visor de payload_blob. Se queda escuchando hasta Ctrl+C.
+    const users = parseUsers(config.adminUsers);
+    if (users.size === 0) throw new Error('admin necesita ADMIN_USERS en .env (genera cada hash con: npm run admin-hash -- <clave>)');
+    if (config.adminSessionSecret.length < 16) throw new Error('admin necesita ADMIN_SESSION_SECRET (≥ 16 caracteres) en .env');
+    const srv = crearServidor({ db: pool, users, secret: config.adminSessionSecret });
+    await new Promise<void>((resolve, reject) => { srv.once('error', reject); srv.listen(config.adminPort, config.adminHost, resolve); });
+    console.log(`Panel en http://${config.adminHost}:${config.adminPort} (usuarios: ${[...users.keys()].join(', ')}). Ctrl+C para parar.`);
+    await new Promise<void>((resolve) => process.once('SIGINT', () => { srv.close(); resolve(); }));
+  } else if (cmd === 'admin-hash') {
+    if (!args[0]) throw new Error('uso: npm run admin-hash -- <clave>');
+    console.log(hashPassword(args[0]));
   } else {
     console.log([
       'Uso:',
+      '  npm run admin   (panel web de revisión ESEF y visor de payload; exige ADMIN_USERS y ADMIN_SESSION_SECRET)',
+      '  npm run admin-hash -- <clave>   (hash para ADMIN_USERS)',
       '  npm run capture -- --scope=symbols:LSE [--symbols=AAPL.US,...] [--budget=N] [--demo] [--go]   (sin --go es dry-run; --demo usa la clave pública demo)',
       '  npm run replay [-- --run=ID] [--all]   (--all vuelve a pasar también lo ya marcado)',
       '  npm run validate [-- --today=YYYY-MM-DD] [--rules=A,B]   (ejecuta las reglas activas del catálogo)',
